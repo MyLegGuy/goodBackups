@@ -1,0 +1,16 @@
+Goals:
+
+(feature 1)
+Have two copies of the same files
+Hash primary copies and backup copies
+Compare hash of backup files to database
+Compare hash of primary files to database
+
+(feature 2)
+Any files from primary copy not in database are hashed, copied to backup, and hashed again, and added to database.
+This is also the function used to init a backup
+
+
+things to consider:
+what to do aboue hashes in filenames? copy them to hash database? But then do they need to stay in the filename after that?
+I like the idea that, no matter what, as long as I keep the filename, I'll have the hash. But then should hashes be put on every filename? That could break things. Maybe only for certian filetypes?
