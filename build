@@ -1,1 +1,1 @@
-gcc main.c -lz
+gcc -g main.c bsdnftw.c goodLinkedList.c -lz

@@ -10,6 +10,8 @@ Compare hash of primary files to database
 Any files from primary copy not in database are hashed, copied to backup, and hashed again, and added to database.
 This is also the function used to init a backup
 
+(feature 3?)
+copy all hash tags to database
 
 things to consider:
 what to do aboue hashes in filenames? copy them to hash database? But then do they need to stay in the filename after that?
