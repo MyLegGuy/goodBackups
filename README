@@ -1,18 +1,11 @@
-Goals:
+goodBackups - Free backup and hashing software for Linux.
 
-(feature 1)
-Have two copies of the same files
-Hash primary copies and backup copies
-Compare hash of backup files to database
-Compare hash of primary files to database
-
-(feature 2)
-Any files from primary copy not in database are hashed, copied to backup, and hashed again, and added to database.
-This is also the function used to init a backup
-
-(feature 3?)
-copy all hash tags to database
-
-things to consider:
-what to do aboue hashes in filenames? copy them to hash database? But then do they need to stay in the filename after that?
-I like the idea that, no matter what, as long as I keep the filename, I'll have the hash. But then should hashes be put on every filename? That could break things. Maybe only for certian filetypes?
+About
+-----
+Given a database destination file and as many folder paths as you want:
+It looks through the folder. 
+If a certain file's name is in the database, it hashes it and compares its hash to the one in the database. If it's wrong, it tells you.
+If a certian file's name isn't in the database, it hahes it and adds it to the database.
+Once it's done looking through the folder, it looks for all database entries that were not used. Those files were missing from the folder.
+It checks the other folders you supplied and see if they have the missing files. If so, the files are copied and verified.
+This process repeats for all other folders supplied.
