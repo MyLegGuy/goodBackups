@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ftw.h>
+#include <dirent.h> // for open dir
+#include <errno.h>
 //
 #include <zlib.h> // for crc32
 //
@@ -19,14 +21,17 @@
 #endif
 #define FOLLOWSYMS 0
 #define HASHLEN 8
+#define HASHLENSTR "8"
 #define OKMESSAGE "OK"
 #define BADMESSAGE "OHNO"
 #define REPORTMESSAGE "%s: got %s, expected %s\n\t%s\n"
 #define ADDNEWMESSAGE "New file:\n\t%s\n"
+#define ADDNEWWITHHASHMESSAGE "New file with tag:\n\t%s\n"
 //
 struct singleDatabaseEntry{
 	char* hash;
 	char* path;
+	signed char seen; // Only used for database
 };
 struct checkArg{
 	char* rootChop;
@@ -35,6 +40,18 @@ struct checkArg{
 	char hasChangedDatabase;
 };
 //
+char fileExists(const char* _passedPath){
+	return (access(_passedPath, R_OK)!=-1);
+}
+char dirExists(const char* _passedPath){
+	DIR* _tempDir = opendir(_passedPath);
+	if (_tempDir!=NULL){
+		closedir(_tempDir);
+		return 1;
+	}else/* if (ENOENT == errno)*/{
+		return 0;
+	}
+}
 const char* findCharBackwards(const char* _startHere, const char* _endHere, int _target){
 	do{
 		if (_startHere[0]==_target){
@@ -123,7 +140,8 @@ nList* readDatabase(char* _passedDatabaseFile){
 			continue;
 		}
 		struct singleDatabaseEntry* _currentEntry = malloc(sizeof(struct singleDatabaseEntry));
-		
+		_currentEntry->seen=0;
+
 		_currentEntry->path = malloc(_spaceSpot-_currentLine+1);
 		memcpy(_currentEntry->path,_currentLine,_spaceSpot-_currentLine);
 		_currentEntry->path[_spaceSpot-_currentLine]='\0';
@@ -134,6 +152,7 @@ nList* readDatabase(char* _passedDatabaseFile){
 		addnList(&_ret)->data = _currentEntry;
 		free(_currentLine);
 	}
+	fclose(fp);
 	return _ret;
 }
 void freeDatabase(nList* _passedList){
@@ -144,6 +163,11 @@ void freeDatabase(nList* _passedList){
 		free(_currentnList);
 	})
 }
+void resetDatabaseSeen(nList* _passedList){
+	ITERATENLIST(_passedList,{
+		((struct singleDatabaseEntry*)_currentnList->data)->seen=0;
+	})
+}
 char readABit(FILE* fp, char* _destBuffer, long* _numRead, long _maxRead){
 	if (feof(fp)){
 		return 1;
@@ -152,11 +176,11 @@ char readABit(FILE* fp, char* _destBuffer, long* _numRead, long _maxRead){
 	return 0;
 }
 
-void copyFile(const char* _srcPath, const char* _destPath){
-	FILE* _sourcefp = fopen(_srcPath,"rb");
-	if (_sourcefp!=NULL){
-		FILE* _destfp = fopen(_destPath,"wb");
-		if (_destfp!=NULL){
+void lowCopyFile(const char* _srcPath, const char* _destPath, char _canMakeDirs){
+	FILE* _destfp = fopen(_destPath,"wb");
+	if (_destfp!=NULL){
+		FILE* _sourcefp = fopen(_srcPath,"rb");
+		if (_sourcefp!=NULL){
 			char* _currentBit = malloc(COPYBUFF);
 			size_t _lastRead;
 			while (!readABit(_sourcefp,_currentBit,&_lastRead,COPYBUFF)){
@@ -165,14 +189,48 @@ void copyFile(const char* _srcPath, const char* _destPath){
 				}
 			}
 			free(_currentBit);
-			fclose(_destfp);
+			fclose(_sourcefp);
+		}else{
+			printf("Failed to open for reading %s\n",_srcPath);
+		}
+		fclose(_destfp);
+	}else{
+		// Make all directories that need to be made for the destination to work
+		char _shouldRetry=0;
+		if (_canMakeDirs){
+			char* _tempPath = strdup(_destPath);
+
+			while(1){
+				char* _possibleSeparator=(char*)findCharBackwards(&(_tempPath[strlen(_tempPath)-1]),_tempPath,SEPARATOR);
+				if (_possibleSeparator!=NULL && _possibleSeparator!=_tempPath){
+					_possibleSeparator[0]='\0';
+					if (dirExists(_tempPath)){
+						break;
+					}else{
+						_shouldRetry=1;
+						if (mkdir(_tempPath,0777)==0){
+							printf("Make directory: %s\n",_tempPath);
+						}else{
+							printf("Failed to make directory %s\n",_tempPath);
+						}
+					}
+				}else{
+					break;
+				}
+			}
+			free(_tempPath);
+		}
+
+		if (_shouldRetry){
+			lowCopyFile(_srcPath,_destPath,0);
 		}else{
 			printf("Failed to open for writing %s\n",_destPath);
 		}
-		fclose(_sourcefp);
-	}else{
-		printf("Failed to open for reading %s\n",_srcPath);
 	}
+}
+
+void copyFile(const char* _srcPath, const char* _destPath){
+	lowCopyFile(_srcPath,_destPath,1);
 }
 
 unsigned char* readEntireFile(char* _filename, long* _retSize){
@@ -223,8 +281,9 @@ char* hashFile(const char* _passedFilename){
 			_finalHash = crc32(_finalHash, _lastBuf, _numRead);
 		}
 		fclose(fp);
-		char* _ret = malloc(HASHLEN);
-		sprintf(_ret,"%08X",_finalHash);
+		free(_lastBuf);
+		char* _ret = malloc(HASHLEN+1);
+		sprintf(_ret,"%0"HASHLENSTR"lX",_finalHash);
 		return _ret;
 	}else{
 		printf("Failed to open %s\n",_passedFilename);
@@ -232,29 +291,39 @@ char* hashFile(const char* _passedFilename){
 	}
 }
 
-int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, struct FTW* ftwbuf, void* _arg){
-	if (strstr(fpath,"HorribleSubs")!=NULL){
-		return 0;
-	}
+struct singleDatabaseEntry* getFromDatabase(nList* _passedDatabase, const char* _searchName){
+	ITERATENLIST(_passedDatabase,{
+		struct singleDatabaseEntry* _currentEntry = _currentnList->data;
+		if (strcmp(_searchName,_currentEntry->path)==0){
+			return _currentEntry;
+		}
+	})
+	return NULL;
+}
 
+int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, struct FTW* ftwbuf, void* _arg){
 	struct checkArg* _passedCheck = _arg;
 	int _cachedRootStrlen = strlen(_passedCheck->rootChop);
 	if (strncmp(fpath,_passedCheck->rootChop,_cachedRootStrlen)!=0){
 		printf("Bad root to path. Path is: %s root is %s\n",fpath,_passedCheck->rootChop);
+		return 1;
 	}
 
 	if (typeflag==FTW_F){
 		char* _actualHash = hashFile(fpath);
 		if (_actualHash!=NULL){
 			signed char _fileMatched=-1;
-			ITERATENLIST(_passedCheck->database,{
-				struct singleDatabaseEntry* _currentEntry = _currentnList->data;
-				if (strcmp(&(fpath[_cachedRootStrlen]),_currentEntry->path)==0){
-					_fileMatched=(strcmp(_actualHash,_currentEntry->hash)==0);
-					printf(REPORTMESSAGE,_fileMatched ? OKMESSAGE : BADMESSAGE, _actualHash, _currentEntry->hash, fpath);
-					READYQUITITERATENLIST;
+			struct singleDatabaseEntry* _matchingEntry = getFromDatabase(_passedCheck->database,&(fpath[_cachedRootStrlen]));
+
+			if (_matchingEntry!=NULL){
+				if (_matchingEntry->seen){
+					printf("What? Already seen %s?\n",_matchingEntry->path);
 				}
-			})
+				_matchingEntry->seen=1;
+				_fileMatched=(strcmp(_actualHash,_matchingEntry->hash)==0);
+				printf(REPORTMESSAGE,_fileMatched ? OKMESSAGE : BADMESSAGE, _actualHash, _matchingEntry->hash, fpath);
+			}
+			
 			if (_fileMatched==-1 || _fileMatched==0){ // File not in database or file wrong hash
 				struct singleDatabaseEntry* _newEntry = malloc(sizeof(struct singleDatabaseEntry));
 				_newEntry->hash = strdup(_actualHash);
@@ -262,8 +331,31 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 				if (_fileMatched==0){ // File wrong hash
 					addnList(&(_passedCheck->retBad))->data=_newEntry;
 				}else{ // File not found
-					printf(ADDNEWMESSAGE,fpath);
-					addnList(&(_passedCheck->database))->data=_newEntry;
+					char* _possibleTagHash = getTagHash(fpath,strlen(fpath));
+					if (_possibleTagHash!=NULL){ // Not in the database, but the filename has a hash we can use.
+						//printf(ADDNEWWITHHASHMESSAGE,_newEntry->path);
+						_fileMatched=(strcmp(_actualHash,_possibleTagHash)==0);
+						printf(REPORTMESSAGE,_fileMatched ? OKMESSAGE : BADMESSAGE, _actualHash, _possibleTagHash, fpath);
+						if (_fileMatched){
+							// Can reuse our struct because our file matched so we don't need to add to bad list
+							free(_newEntry->hash);
+							_newEntry->hash = _possibleTagHash;
+							addnList(&(_passedCheck->database))->data=_newEntry;
+						}else{
+							// Need a new struct for the database representing the okay hash
+							struct singleDatabaseEntry* _addThis = malloc(sizeof(struct singleDatabaseEntry));
+							_addThis->path = strdup(_newEntry->path);
+							_addThis->hash = _possibleTagHash;
+							addnList(&(_passedCheck->database))->data=_addThis;
+							// and it's bad
+							addnList(&(_passedCheck->retBad))->data=_newEntry;
+						}
+						//_fileMatched = (strcmp(_possibleTagHash,_newEntry->hash)==0);
+						//char* getTagHash(const char* _passedFilename, int _fakeStrlen){
+					}else{ // No hash, not in database, assume our file is okay
+						printf(ADDNEWMESSAGE,fpath);
+						addnList(&(_passedCheck->database))->data=_newEntry;
+					}
 					_passedCheck->hasChangedDatabase=1;
 				}
 			}
@@ -279,33 +371,159 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 }
 // Returns list of broken files
 nList* checkDir(nList** _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified){
-	if (_passedDirectory[strlen(_passedDirectory)-1]!=SEPARATOR){
-		printf("NEED END WITH SEPARATOR, MORON");
-		return NULL;
-	}
 	struct checkArg myCheckArgs;
 	myCheckArgs.database = *_passedDatabase;
 	myCheckArgs.retBad = NULL; 
 	myCheckArgs.rootChop = _passedDirectory;
+	myCheckArgs.hasChangedDatabase=0;
 	nftwArg(_passedDirectory,checkSingleFile,5,FOLLOWSYMS ? 0 : FTW_PHYS, &myCheckArgs);
 	*_ret_DatabaseModified = myCheckArgs.hasChangedDatabase;
 	*_passedDatabase = myCheckArgs.database;
 	return myCheckArgs.retBad;
 }
 
-int main(int argc, char** args){
-
-	//printf("%s\n",hashFile("/home/nathan/Downloads/newanime/Slow Start/[Nii-sama] Slow Start - 01 [1080p][5F24D239].mkv"));
-	//copyFile("/home/nathan/Downloads/newanime/Slow Start/[Nii-sama] Slow Start - 01 [1080p][5F24D239].mkv","/mnt/bla.mkv");
-	//printf("%s\n",hashFile("/mnt/bla.mkv"));
-	nList* _currentDatabase = readDatabase("./a");
-	char _needResaveDatabase=0;
-	nList* _brokenFiles = checkDir(&_currentDatabase,"/home/nathan/Downloads/newanime/",&_needResaveDatabase);
-	if (_needResaveDatabase){
-		writeDatabase(_currentDatabase,"./b");
-	}else{
-		printf("Database unchanged.");
+char hasArg(char* _searchTarget, int argc, char** args){
+	int i;
+	for (i=0;i<argc;++i){
+		if (strcmp(args[i],_searchTarget)==0){
+			return 1;
+		}
 	}
+	return 0;
+}
+
+int main(int argc, char** args){
+	if (argc<3){
+		printf("not enuff args.\n%s <db file> <folder 1> [folder 2] [folder ...] [optional args]\n",args[0]);
+		return 0;
+	}
+	int i;
+	int _numFolders=argc-2;
+	if (access(args[1],F_OK)==-1){ // If our target database doesn't exist
+		if (hasArg("--newdb",argc,args)){
+			--_numFolders;
+			printf("Making new database...\n");
+			FILE* fp = fopen(args[1],"wb");
+			if (fp!=NULL){
+				fclose(fp);
+			}else{
+				printf("Failed to create newfile at %s\n",args[1]);
+				return 1;
+			}
+			printf("Made new database.\n");
+		}else{
+			printf("%s does not exist. To make a new database, pass --newdb\n",args[1]);
+			return 1;
+		}
+	}
+	if (access(args[1],W_OK)==-1){
+		printf("can't write to database file at %s\n",args[1]);
+		return 1;
+	}
+	for (i=0;i<_numFolders;++i){
+		if (args[i+2][strlen(args[i+2])-1]!=SEPARATOR){
+			printf("All folder names need to end with %c. Failed on %s\n",SEPARATOR,args[i+2]);
+			return 1;
+		}
+		if (args[i+2][0]=='.'){
+			printf("All folder names should be absolute. Failed on %s\n",args[i+2]);
+			return 1;
+		}
+		if (!dirExists(args[i+2])){
+			printf("Directory does not exist %s\n",args[i+2]);
+			return 1;
+		}
+	}
+
+	/////////////////
+	nList* _currentDatabase = readDatabase(args[1]);
+	nList* _brokenLists[_numFolders];
+
+	for (i=0;i<_numFolders;++i){
+		printf("Now checking folder %s\n",args[i+2]);
+		char _needResaveDatabase=0;
+		_brokenLists[i] = checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase);
+		if (_brokenLists[i]!=NULL){
+			printf("=====\nBROKEN FILES\n======\n");
+			ITERATENLIST(_brokenLists[i],{
+				struct singleDatabaseEntry* _badEntry = _currentnList->data;
+				struct singleDatabaseEntry* _expectedEntry = getFromDatabase(_currentDatabase,_badEntry->path);
+				if (_expectedEntry!=NULL){
+					printf(REPORTMESSAGE,BADMESSAGE, _badEntry->hash, _expectedEntry->hash, _badEntry->path);
+				}else{
+					printf("Well, it's broken, but couldn't find the following file in the database:\n\t%s:%s\n",_badEntry->path,_badEntry->hash);
+				}
+			})
+		}else{
+			printf("No broken files. :)\n");
+		}
+		if (_needResaveDatabase){
+			writeDatabase(_currentDatabase,args[1]);
+		}else{
+			printf("No database changes.\n");
+		}
+
+
+		// Look for any files that should've been there but weren't
+		ITERATENLIST(_currentDatabase,{
+			struct singleDatabaseEntry* _currentEntry = _currentnList->data;
+			if (!_currentEntry->seen){
+				char* _destPath = malloc(strlen(_currentEntry->path)+strlen(args[i+2])+1);
+				strcpy(_destPath,args[i+2]);
+				strcat(_destPath,_currentEntry->path);
+				printf("Didn't see %s. Will try and put.\n",_destPath);
+				char _worked=0;
+				int j;
+				for (j=0;j<_numFolders;++j){
+					if (j==i){
+						continue;
+					}
+					char* _tempPath = malloc(strlen(_currentEntry->path)+strlen(args[j+2])+1);
+					strcpy(_tempPath,args[j+2]);
+					strcat(_tempPath,_currentEntry->path);
+					if (fileExists(_tempPath)){
+						char* _possibleHash = hashFile(_tempPath);
+						if (_possibleHash!=NULL){
+							if (strcmp(_possibleHash,_currentEntry->hash)==0){
+								printf("Copying and hashing %s to %s\n",_tempPath,_destPath);
+								copyFile(_tempPath,_destPath);
+								// Check dest file after copied
+								free(_possibleHash);
+								_possibleHash = hashFile(_destPath); // Now this refers to the hash of our dest file
+								if (_possibleHash!=NULL){
+									if (strcmp(_currentEntry->hash,_possibleHash)==0){
+										printf("Successful copy.\n");
+										_worked=1;
+									}else{
+										printf("Wrong hash after copying to %s. Expected %s.\n",_destPath,_currentEntry->hash);
+									}
+									free(_possibleHash);
+								}else{
+									printf("Failed to hash dest file after copying %s to %s\n",_tempPath,_destPath);
+								}
+							}else{
+								printf("Copy candidate at %s hash does not line up. Got %s, expected %s.\n",_tempPath,_possibleHash,_currentEntry->hash);
+								free(_possibleHash);
+							}
+						}else{
+							printf("Failed to hash existing copy source candidate at %s\n",_tempPath);
+						}
+					}
+					free(_tempPath);
+				}
+				if (!_worked){
+					printf("Failed to find a copy of %s to copy to %s.\n",_currentEntry->path,_destPath);
+				}
+				free(_destPath);
+			}
+		})
+
+		resetDatabaseSeen(_currentDatabase);
+	}
+	for (i=0;i<_numFolders;++i){
+		freeDatabase(_brokenLists[i]);
+	}
+	freeDatabase(_currentDatabase);
 	
 
 	//nftwArg("", getHashFromFilename, 5, FOLLOWSYMS ? 0 : FTW_PHYS,"bla");

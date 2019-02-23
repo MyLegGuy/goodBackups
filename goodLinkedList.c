@@ -29,6 +29,18 @@ int nListLen(nList* _passed){
 	return _ret;
 }
 
+void appendList(nList** _source, nList* _addThis){
+	if (*_source==NULL){
+		*_source=_addThis;
+		return;
+	}
+	nList* _temp=*_source;
+	while(_temp->nextEntry!=NULL){
+		_temp=_temp->nextEntry;
+	}
+	_temp->nextEntry=_addThis;
+}
+
 nList* addnList(nList** _passed){
 	if (*_passed==NULL){
 		return (*_passed=newnList());

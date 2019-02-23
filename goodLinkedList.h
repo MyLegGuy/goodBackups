@@ -30,4 +30,5 @@ void freenList(nList* _freeThis, char _freeMemory);
 nList* newnList();
 int nListLen(nList* _passed);
 nList* getnList(nList* _passed, int _index);
+void appendList(nList** _source, nList* _addThis);
 #endif
