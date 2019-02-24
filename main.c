@@ -27,6 +27,10 @@
 #define REPORTMESSAGE "%s: got %s, expected %s\n\t%s\n"
 #define ADDNEWMESSAGE "New file:\n\t%s\n"
 #define ADDNEWWITHHASHMESSAGE "New file with tag:\n\t%s\n"
+// gcc extension
+#define ACTION_CHECKEXISTING 1 // Check files that are already in database
+#define ACTION_COPYMISSING 2 // Copy files that weren't in the folder, but were in the database
+#define ACTION_UPDATEDB 4 // New files that aren't in the database are hashed and added. Also checked if they have a tag.
 //
 struct singleDatabaseEntry{
 	char* hash;
@@ -38,6 +42,7 @@ struct checkArg{
 	nList* database;
 	nList* retBad;
 	char hasChangedDatabase;
+	long chosenActions;
 };
 //
 char fileExists(const char* _passedPath){
@@ -199,23 +204,30 @@ void lowCopyFile(const char* _srcPath, const char* _destPath, char _canMakeDirs)
 		char _shouldRetry=0;
 		if (_canMakeDirs){
 			char* _tempPath = strdup(_destPath);
-
+			int _numMakeDirs=0;
 			while(1){
 				char* _possibleSeparator=(char*)findCharBackwards(&(_tempPath[strlen(_tempPath)-1]),_tempPath,SEPARATOR);
 				if (_possibleSeparator!=NULL && _possibleSeparator!=_tempPath){
 					_possibleSeparator[0]='\0';
-					if (dirExists(_tempPath)){
+					if (dirExists(_tempPath)){ // When the directory that does exist is found break to create the missing ones in order.
 						break;
 					}else{
-						_shouldRetry=1;
-						if (mkdir(_tempPath,0777)==0){
-							printf("Make directory: %s\n",_tempPath);
-						}else{
-							printf("Failed to make directory %s\n",_tempPath);
-						}
+						++_numMakeDirs;
 					}
 				}else{
 					break;
+				}
+			}
+			if (_numMakeDirs>0){
+				_shouldRetry=1;
+				int i;
+				for (i=0;i<_numMakeDirs;++i){
+					_tempPath[strlen(_tempPath)]=SEPARATOR;
+					if (mkdir(_tempPath,0777)==0){
+						printf("Make directory: %s\n",_tempPath);
+					}else{
+						printf("Failed to make directory %s\n",_tempPath);
+					}
 				}
 			}
 			free(_tempPath);
@@ -258,7 +270,18 @@ char* getTagHash(const char* _passedFilename, int _fakeStrlen){
 		char* _possibleHashEnd = strchr(_possibleHashStart, ']');
 		if (_possibleHashEnd!=NULL){
 			int _hashLen = _possibleHashEnd-_possibleHashStart;
-			if (_hashLen!=HASHLEN){
+			char _isPotentialHash = (_hashLen==HASHLEN);
+			if (_isPotentialHash){
+				// Make sure it only has hex chars
+				int j;
+				for (j=0;j<HASHLEN;++j){
+					if(!((_possibleHashStart[j]>='0' && _possibleHashStart[j]<='9') || (_possibleHashStart[j]>='A' && _possibleHashStart[j]<='F'))){
+						_isPotentialHash=0;
+						break;
+					}
+				}
+			}
+			if (!_isPotentialHash){
 				--_possibleHashStart;
 				return getTagHash(_passedFilename,_possibleHashStart-_passedFilename);
 			}else{
@@ -328,6 +351,7 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 				struct singleDatabaseEntry* _newEntry = malloc(sizeof(struct singleDatabaseEntry));
 				_newEntry->hash = strdup(_actualHash);
 				_newEntry->path = strdup(&(fpath[_cachedRootStrlen]));
+				_newEntry->seen = 1;
 				if (_fileMatched==0){ // File wrong hash
 					addnList(&(_passedCheck->retBad))->data=_newEntry;
 				}else{ // File not found
@@ -346,6 +370,7 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 							struct singleDatabaseEntry* _addThis = malloc(sizeof(struct singleDatabaseEntry));
 							_addThis->path = strdup(_newEntry->path);
 							_addThis->hash = _possibleTagHash;
+							_addThis->seen = 1;
 							addnList(&(_passedCheck->database))->data=_addThis;
 							// and it's bad
 							addnList(&(_passedCheck->retBad))->data=_newEntry;
@@ -370,12 +395,13 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 	return 0;
 }
 // Returns list of broken files
-nList* checkDir(nList** _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified){
+nList* checkDir(nList** _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified, long _passedActions){
 	struct checkArg myCheckArgs;
 	myCheckArgs.database = *_passedDatabase;
 	myCheckArgs.retBad = NULL; 
 	myCheckArgs.rootChop = _passedDirectory;
 	myCheckArgs.hasChangedDatabase=0;
+	myCheckArgs.chosenActions = _passedActions;
 	nftwArg(_passedDirectory,checkSingleFile,5,FOLLOWSYMS ? 0 : FTW_PHYS, &myCheckArgs);
 	*_ret_DatabaseModified = myCheckArgs.hasChangedDatabase;
 	*_passedDatabase = myCheckArgs.database;
@@ -442,7 +468,7 @@ int main(int argc, char** args){
 	for (i=0;i<_numFolders;++i){
 		printf("Now checking folder %s\n",args[i+2]);
 		char _needResaveDatabase=0;
-		_brokenLists[i] = checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase);
+		_brokenLists[i] = checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase, 0);
 		if (_brokenLists[i]!=NULL){
 			printf("=====\nBROKEN FILES\n======\n");
 			ITERATENLIST(_brokenLists[i],{
@@ -524,15 +550,4 @@ int main(int argc, char** args){
 		freeDatabase(_brokenLists[i]);
 	}
 	freeDatabase(_currentDatabase);
-	
-
-	//nftwArg("", getHashFromFilename, 5, FOLLOWSYMS ? 0 : FTW_PHYS,"bla");
-/*
-	nList* _list = readDatabase("./a");
-	ITERATENLIST(_list,{
-		printf("%s\n",((struct singleDatabaseEntry*)_currentnList->data)->path);
-		printf("%s\n",((struct singleDatabaseEntry*)_currentnList->data)->hash);
-	})
-	freeDatabase(_list);
-*/
 }
