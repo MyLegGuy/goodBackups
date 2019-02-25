@@ -9,3 +9,31 @@ If a certian file's name isn't in the database, it hahes it and adds it to the d
 Once it's done looking through the folder, it looks for all database entries that were not used. Those files were missing from the folder.
 It checks the other folders you supplied and see if they have the missing files. If so, the files are copied and verified.
 This process repeats for all other folders supplied.
+
+Usage
+-----
+* All paths must be absolute
+* All folders should end in a slash
+* You must specify a mode as an optional arg. See "Modes".
+./a.out <db file> <primary folder> [backup folder 1] [backup folder ...] <mode> [optional args]
+
+Optional args
+-------------
+Just append these to the end of your command. If you spell them wrong, they'll be interpreted as bad folder names.
+--newdb
+	* Pass this if you're making a new database. 
+--addFromBackups
+	* Allows files that are in the backup folders to be added to the database.
+	* By default, this is disabled and only files from primary folder are added to database.
+		* Be careful. If you delete a file from the primary folder and the database and then run this program, it'll bring the file back from the dead.
+	* If you enable this option, files added to the database from the backup folder won't affect the folders before it until the next run.
+
+Modes
+-----
+--update
+	* Will look for files that aren't in the database and add those.
+	* Will look for files missing from backup folders and copy them primary folder
+--full
+	* Same as --update, but will also verify files that are already in the database.
+--listMissing
+	* Just list files that are in database but not in folder.
