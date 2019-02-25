@@ -27,10 +27,11 @@
 #define REPORTMESSAGE "%s: got %s, expected %s\n\t%s\n"
 #define ADDNEWMESSAGE "New file:\n\t%s\n"
 #define ADDNEWWITHHASHMESSAGE "New file with tag:\n\t%s\n"
-// gcc extension
+//
 #define ACTION_CHECKEXISTING 1 // Check files that are already in database
 #define ACTION_COPYMISSING 2 // Copy files that weren't in the folder, but were in the database
 #define ACTION_UPDATEDB 4 // New files that aren't in the database are hashed and added. Also checked if they have a tag.
+#define ACTION_LISTMISSING 8
 //
 struct singleDatabaseEntry{
 	char* hash;
@@ -333,9 +334,12 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 	}
 
 	if (typeflag==FTW_F){
-		char* _actualHash = hashFile(fpath);
-		if (_actualHash!=NULL){
-			signed char _fileMatched=-1;
+		char* _actualHash = NULL;
+		if (_passedCheck->chosenActions & ACTION_CHECKEXISTING){
+			_actualHash = hashFile(fpath);
+		}
+		if (_actualHash!=NULL || ((_passedCheck->chosenActions & ACTION_CHECKEXISTING)==0)){
+			signed char _fileMatched=-1; // -1 means not in database, 0 means did not match, 1 means matched, 2 means do no more with this file
 			struct singleDatabaseEntry* _matchingEntry = getFromDatabase(_passedCheck->database,&(fpath[_cachedRootStrlen]));
 
 			if (_matchingEntry!=NULL){
@@ -343,49 +347,66 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 					printf("What? Already seen %s?\n",_matchingEntry->path);
 				}
 				_matchingEntry->seen=1;
-				_fileMatched=(strcmp(_actualHash,_matchingEntry->hash)==0);
-				printf(REPORTMESSAGE,_fileMatched ? OKMESSAGE : BADMESSAGE, _actualHash, _matchingEntry->hash, fpath);
+				if (_passedCheck->chosenActions & ACTION_CHECKEXISTING){ // Hash must exist to get here
+					_fileMatched=(strcmp(_actualHash,_matchingEntry->hash)==0);
+					printf(REPORTMESSAGE,_fileMatched ? OKMESSAGE : BADMESSAGE, _actualHash, _matchingEntry->hash, fpath);
+				}else{
+					printf("Seen %s\n",fpath);
+					_fileMatched=2;
+				}
 			}
 			
-			if (_fileMatched==-1 || _fileMatched==0){ // File not in database or file wrong hash
+			if (_fileMatched==-1 || _fileMatched==0){ // File not in database or file wrong hash.
 				struct singleDatabaseEntry* _newEntry = malloc(sizeof(struct singleDatabaseEntry));
-				_newEntry->hash = strdup(_actualHash);
 				_newEntry->path = strdup(&(fpath[_cachedRootStrlen]));
 				_newEntry->seen = 1;
-				if (_fileMatched==0){ // File wrong hash
+				_newEntry->hash = "Nothing should be here right now.";
+				if (_fileMatched==0){ // File wrong hash. Only happens for ACTION_CHECKEXISTING
+					_newEntry->hash = strdup(_actualHash);
 					addnList(&(_passedCheck->retBad))->data=_newEntry;
-				}else{ // File not found
-					char* _possibleTagHash = getTagHash(fpath,strlen(fpath));
-					if (_possibleTagHash!=NULL){ // Not in the database, but the filename has a hash we can use.
-						//printf(ADDNEWWITHHASHMESSAGE,_newEntry->path);
-						_fileMatched=(strcmp(_actualHash,_possibleTagHash)==0);
-						printf(REPORTMESSAGE,_fileMatched ? OKMESSAGE : BADMESSAGE, _actualHash, _possibleTagHash, fpath);
-						if (_fileMatched){
-							// Can reuse our struct because our file matched so we don't need to add to bad list
-							free(_newEntry->hash);
-							_newEntry->hash = _possibleTagHash;
-							addnList(&(_passedCheck->database))->data=_newEntry;
-						}else{
-							// Need a new struct for the database representing the okay hash
-							struct singleDatabaseEntry* _addThis = malloc(sizeof(struct singleDatabaseEntry));
-							_addThis->path = strdup(_newEntry->path);
-							_addThis->hash = _possibleTagHash;
-							_addThis->seen = 1;
-							addnList(&(_passedCheck->database))->data=_addThis;
-							// and it's bad
-							addnList(&(_passedCheck->retBad))->data=_newEntry;
-						}
-						//_fileMatched = (strcmp(_possibleTagHash,_newEntry->hash)==0);
-						//char* getTagHash(const char* _passedFilename, int _fakeStrlen){
-					}else{ // No hash, not in database, assume our file is okay
-						printf(ADDNEWMESSAGE,fpath);
-						addnList(&(_passedCheck->database))->data=_newEntry;
+				}else if (_fileMatched==-1 && (_passedCheck->chosenActions & ACTION_UPDATEDB)){ // File not found in database then add it
+
+					if (_actualHash==NULL){
+						_actualHash = hashFile(fpath);
 					}
-					_passedCheck->hasChangedDatabase=1;
+					if (_actualHash!=NULL){
+						char* _possibleTagHash = getTagHash(fpath,strlen(fpath));
+						if (_possibleTagHash!=NULL){ // Not in the database, but the filename has a hash we can use.
+							//printf(ADDNEWWITHHASHMESSAGE,_newEntry->path);
+							_fileMatched=(strcmp(_actualHash,_possibleTagHash)==0);
+							printf(REPORTMESSAGE,_fileMatched ? OKMESSAGE : BADMESSAGE, _actualHash, _possibleTagHash, fpath);
+							if (_fileMatched){
+								// Can reuse our struct because our file matched so we don't need to add to bad list
+								_newEntry->hash = _possibleTagHash;
+								addnList(&(_passedCheck->database))->data=_newEntry;
+							}else{
+								// Need a new struct for the database representing the okay hash
+								struct singleDatabaseEntry* _addThis = malloc(sizeof(struct singleDatabaseEntry));
+								_addThis->path = strdup(_newEntry->path);
+								_addThis->hash = _possibleTagHash;
+								_addThis->seen = 1;
+								addnList(&(_passedCheck->database))->data=_addThis;
+								// and it's bad
+								_newEntry->hash = strdup(_actualHash);
+								addnList(&(_passedCheck->retBad))->data=_newEntry;
+							}
+						}else{ // No hash, not in database, assume our file is okay
+							printf(ADDNEWMESSAGE,fpath);
+							_newEntry->hash = strdup(_actualHash);
+							addnList(&(_passedCheck->database))->data=_newEntry;
+						}
+						_passedCheck->hasChangedDatabase=1;
+					}else{
+						printf("(way2)Failed to hash file %s\n",fpath);
+					}
+				}else{
+					free(_newEntry->path);
+					free(_newEntry);
+					printf("Do nothing with file %s not in database.\n",fpath);
 				}
 			}
 		}else{
-			printf("Failed to hash file %s\n",fpath);
+			printf("(way1)Failed to hash file %s\n",fpath);
 		}
 		free(_actualHash);
 	}else if (typeflag!=FTW_D){
@@ -420,11 +441,13 @@ char hasArg(char* _searchTarget, int argc, char** args){
 
 int main(int argc, char** args){
 	if (argc<3){
-		printf("not enuff args.\n%s <db file> <folder 1> [folder 2] [folder ...] [optional args]\n",args[0]);
+		printf("not enuff args.\n%s <db file> <primary folder> [backup folder 1] [backup folder ...] [optional args]\n",args[0]);
 		return 0;
 	}
 	int i;
 	int _numFolders=argc-2;
+	long _passedActions = 0;
+	char _addFromPrimaryOnly=1;
 	if (access(args[1],F_OK)==-1){ // If our target database doesn't exist
 		if (hasArg("--newdb",argc,args)){
 			--_numFolders;
@@ -446,6 +469,25 @@ int main(int argc, char** args){
 		printf("can't write to database file at %s\n",args[1]);
 		return 1;
 	}
+	//
+	if (hasArg("--full",argc,args)){
+		_passedActions |= ACTION_COPYMISSING;
+		_passedActions |= ACTION_CHECKEXISTING;
+		_passedActions |= ACTION_UPDATEDB;
+		--_numFolders;
+	}else if (hasArg("--update",argc,args)){
+		_passedActions |= ACTION_COPYMISSING;
+		_passedActions |= ACTION_UPDATEDB;
+		--_numFolders;
+	}
+	if (hasArg("--listMissing",argc,args)){
+		_passedActions |= ACTION_LISTMISSING;
+		--_numFolders;
+	}
+	if (hasArg("--addFromBackups",argc,args)){
+		_addFromPrimaryOnly=0;
+	}
+	//
 	for (i=0;i<_numFolders;++i){
 		if (args[i+2][strlen(args[i+2])-1]!=SEPARATOR){
 			printf("All folder names need to end with %c. Failed on %s\n",SEPARATOR,args[i+2]);
@@ -460,7 +502,10 @@ int main(int argc, char** args){
 			return 1;
 		}
 	}
-
+	if (_passedActions==0){
+		printf("No actions specified.\n");
+		return 1;
+	}
 	/////////////////
 	nList* _currentDatabase = readDatabase(args[1]);
 	nList* _brokenLists[_numFolders];
@@ -468,7 +513,7 @@ int main(int argc, char** args){
 	for (i=0;i<_numFolders;++i){
 		printf("Now checking folder %s\n",args[i+2]);
 		char _needResaveDatabase=0;
-		_brokenLists[i] = checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase, 0);
+		_brokenLists[i] = checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase, _passedActions);
 		if (_brokenLists[i]!=NULL){
 			printf("=====\nBROKEN FILES\n======\n");
 			ITERATENLIST(_brokenLists[i],{
@@ -488,63 +533,71 @@ int main(int argc, char** args){
 		}else{
 			printf("No database changes.\n");
 		}
-
-
-		// Look for any files that should've been there but weren't
-		ITERATENLIST(_currentDatabase,{
-			struct singleDatabaseEntry* _currentEntry = _currentnList->data;
-			if (!_currentEntry->seen){
-				char* _destPath = malloc(strlen(_currentEntry->path)+strlen(args[i+2])+1);
-				strcpy(_destPath,args[i+2]);
-				strcat(_destPath,_currentEntry->path);
-				printf("Didn't see %s. Will try and put.\n",_destPath);
-				char _worked=0;
-				int j;
-				for (j=0;j<_numFolders;++j){
-					if (j==i){
-						continue;
-					}
-					char* _tempPath = malloc(strlen(_currentEntry->path)+strlen(args[j+2])+1);
-					strcpy(_tempPath,args[j+2]);
-					strcat(_tempPath,_currentEntry->path);
-					if (fileExists(_tempPath)){
-						char* _possibleHash = hashFile(_tempPath);
-						if (_possibleHash!=NULL){
-							if (strcmp(_possibleHash,_currentEntry->hash)==0){
-								printf("Copying and hashing %s to %s\n",_tempPath,_destPath);
-								copyFile(_tempPath,_destPath);
-								// Check dest file after copied
-								free(_possibleHash);
-								_possibleHash = hashFile(_destPath); // Now this refers to the hash of our dest file
-								if (_possibleHash!=NULL){
-									if (strcmp(_currentEntry->hash,_possibleHash)==0){
-										printf("Successful copy.\n");
-										_worked=1;
-									}else{
-										printf("Wrong hash after copying to %s. Expected %s.\n",_destPath,_currentEntry->hash);
-									}
-									free(_possibleHash);
-								}else{
-									printf("Failed to hash dest file after copying %s to %s\n",_tempPath,_destPath);
-								}
-							}else{
-								printf("Copy candidate at %s hash does not line up. Got %s, expected %s.\n",_tempPath,_possibleHash,_currentEntry->hash);
-								free(_possibleHash);
+		if ((_passedActions & ACTION_COPYMISSING) || (_passedActions & ACTION_LISTMISSING)){
+			// Look for any files that should've been there but weren't
+			ITERATENLIST(_currentDatabase,{
+				struct singleDatabaseEntry* _currentEntry = _currentnList->data;
+				if (!_currentEntry->seen){
+					char* _destPath = malloc(strlen(_currentEntry->path)+strlen(args[i+2])+1);
+					strcpy(_destPath,args[i+2]);
+					strcat(_destPath,_currentEntry->path);
+					if (_passedActions & ACTION_COPYMISSING){
+						printf("Didn't see %s. Will try and put.\n",_destPath);
+						char _worked=0;
+						int j;
+						for (j=0;j<_numFolders;++j){
+							if (j==i){
+								continue;
 							}
-						}else{
-							printf("Failed to hash existing copy source candidate at %s\n",_tempPath);
+							char* _tempPath = malloc(strlen(_currentEntry->path)+strlen(args[j+2])+1);
+							strcpy(_tempPath,args[j+2]);
+							strcat(_tempPath,_currentEntry->path);
+							if (fileExists(_tempPath)){
+								char* _possibleHash = hashFile(_tempPath);
+								if (_possibleHash!=NULL){
+									if (strcmp(_possibleHash,_currentEntry->hash)==0){
+										printf("Copying and hashing %s to %s\n",_tempPath,_destPath);
+										copyFile(_tempPath,_destPath);
+										// Check dest file after copied
+										free(_possibleHash);
+										_possibleHash = hashFile(_destPath); // Now this refers to the hash of our dest file
+										if (_possibleHash!=NULL){
+											if (strcmp(_currentEntry->hash,_possibleHash)==0){
+												printf("Successful copy.\n");
+												_worked=1;
+											}else{
+												printf("Wrong hash after copying to %s. Expected %s.\n",_destPath,_currentEntry->hash);
+											}
+											free(_possibleHash);
+										}else{
+											printf("Failed to hash dest file after copying %s to %s\n",_tempPath,_destPath);
+										}
+									}else{
+										printf("Copy candidate at %s hash does not line up. Got %s, expected %s.\n",_tempPath,_possibleHash,_currentEntry->hash);
+										free(_possibleHash);
+									}
+								}else{
+									printf("Failed to hash existing copy source candidate at %s\n",_tempPath);
+								}
+							}
+							free(_tempPath);
 						}
+						if (!_worked){
+							printf("Failed to find a copy of %s to copy to %s.\n",_currentEntry->path,_destPath);
+						}
+					}else{
+						printf("Didn't see %s.\n",_destPath);
 					}
-					free(_tempPath);
+					free(_destPath);
 				}
-				if (!_worked){
-					printf("Failed to find a copy of %s to copy to %s.\n",_currentEntry->path,_destPath);
-				}
-				free(_destPath);
-			}
-		})
+			})
+		}
 
 		resetDatabaseSeen(_currentDatabase);
+
+		if (i==0 && _addFromPrimaryOnly){
+			_passedActions &= ~(1UL << 2);
+		}
 	}
 	for (i=0;i<_numFolders;++i){
 		freeDatabase(_brokenLists[i]);
