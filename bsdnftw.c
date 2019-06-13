@@ -30,6 +30,8 @@
 #include <fts.h>
 #include <ftw.h>
 
+// nftw, but you can pass an argument to your function
+// Also, if your function returns 2 for FTS_D, skip all the files inside that directory
 int nftwArg(const char *path, int (*fn)(const char *, const struct stat *, int, struct FTW *, void* customArg), int nfds, int ftwflags, void* customArg){
 	char * const paths[2] = { (char *)path, NULL };
 	struct FTW ftw;
@@ -94,8 +96,17 @@ int nftwArg(const char *path, int (*fn)(const char *, const struct stat *, int, 
 		ftw.base = cur->fts_pathlen - cur->fts_namelen;
 		ftw.level = cur->fts_level;
 		error = fn(cur->fts_path, cur->fts_statp, fnflag, &ftw,customArg);
-		if (error != 0)
-			break;
+		if (error != 0){
+			if (cur->fts_info==FTS_D){
+				if (error == 2){
+					fts_set(ftsp,cur,FTS_SKIP); // Skip all decendents
+				}else{
+					break;
+				}
+			}else{
+				break;
+			}
+		}
 	}
 done:
 	sverrno = errno;
