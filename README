@@ -27,6 +27,8 @@ Just append these to the end of your command. If you spell them wrong, they'll b
 	* By default, this is disabled and only files from primary folder are added to database.
 		* Be careful. If you delete a file from the primary folder and the database and then run this program, it'll bring the file back from the dead.
 	* If you enable this option, files added to the database from the backup folder won't affect the folders before it until the next run.
+--exclude <exclude list file>
+	Give it a file with a list of folders to exclude. One path per line, all paths absolute. 
 
 Modes
 -----
