@@ -202,7 +202,7 @@ char readABit(FILE* fp, char* _destBuffer, long* _numRead, long _maxRead){
 	*_numRead = fread(_destBuffer,1,_maxRead,fp);
 	return 0;
 }
-void lowCopyFile(const char* _srcPath, const char* _destPath, char _canMakeDirs){
+char lowCopyFile(const char* _srcPath, const char* _destPath, char _canMakeDirs){
 	FILE* _destfp = fopen(_destPath,"wb");
 	if (_destfp!=NULL){
 		FILE* _sourcefp = fopen(_srcPath,"rb");
@@ -258,11 +258,13 @@ void lowCopyFile(const char* _srcPath, const char* _destPath, char _canMakeDirs)
 			lowCopyFile(_srcPath,_destPath,0);
 		}else{
 			printf("Failed to open for writing %s\n",_destPath);
+			return 1;
 		}
 	}
+	return 0;
 }
-void copyFile(const char* _srcPath, const char* _destPath){
-	lowCopyFile(_srcPath,_destPath,1);
+char copyFile(const char* _srcPath, const char* _destPath){
+	return lowCopyFile(_srcPath,_destPath,1);
 }
 unsigned char* readEntireFile(char* _filename, long* _retSize){
 	char* _loadedBuffer;
@@ -424,18 +426,20 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 			printf("(way1)Failed to hash file %s\n",fpath);
 		}
 		free(_actualHash);
-	}else if (typeflag==FTW_D){
+	}else{
 		if (isExcludedDir(_passedCheck->excludedDirs,_passedCheck->numExcluded,fpath)){
 			return 2;
+		}else{
+			if (typeflag!=FTW_D){
+				printf("Unknown thing passed.\n%d:%s\n",typeflag,fpath);
+				return 1;
+			}
 		}
-	}else{
-		printf("Unknown thing passed.\n%d:%s\n",typeflag,fpath);
-		return 1;
 	}
 	return 0;
 }
 // Returns list of broken files
-nList* checkDir(nList** _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified, long _passedActions, int _numExcluded, char** _passedExcluded){
+char checkDir(nList** _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified, long _passedActions, int _numExcluded, char** _passedExcluded, nList** _retBad){
 	struct checkArg myCheckArgs;
 	myCheckArgs.database = *_passedDatabase;
 	myCheckArgs.retBad = NULL; 
@@ -444,10 +448,11 @@ nList* checkDir(nList** _passedDatabase, char* _passedDirectory, char* _ret_Data
 	myCheckArgs.chosenActions = _passedActions;
 	myCheckArgs.numExcluded=_numExcluded;
 	myCheckArgs.excludedDirs=_passedExcluded;
-	nftwArg(_passedDirectory,checkSingleFile,5,FOLLOWSYMS ? 0 : FTW_PHYS, &myCheckArgs);
+	char _ret = nftwArg(_passedDirectory,checkSingleFile,5,FOLLOWSYMS ? 0 : FTW_PHYS, &myCheckArgs);
 	*_ret_DatabaseModified = myCheckArgs.hasChangedDatabase;
 	*_passedDatabase = myCheckArgs.database;
-	return myCheckArgs.retBad;
+	*_retBad = myCheckArgs.retBad;
+	return _ret;
 }
 char hasArg(char* _searchTarget, int argc, char** args){
 	int i;
@@ -587,7 +592,10 @@ int main(int argc, char** args){
 	for (i=0;i<_numFolders;++i){
 		printf("Now checking folder %s\n",args[i+2]);
 		char _needResaveDatabase=0;
-		_brokenLists[i] = checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase, _passedActions,_numExcludedFolders,_excludedFolders);
+		if (checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase, _passedActions,_numExcludedFolders,_excludedFolders,&_brokenLists[i])){
+			printf("Checking failed!\n");
+			return 1;
+		}
 		if (_brokenLists[i]!=NULL){
 			printf("=====\nBROKEN FILES\n======\n");
 			ITERATENLIST(_brokenLists[i],{

@@ -100,6 +100,7 @@ int nftwArg(const char *path, int (*fn)(const char *, const struct stat *, int, 
 			if (cur->fts_info==FTS_D){
 				if (error == 2){
 					fts_set(ftsp,cur,FTS_SKIP); // Skip all decendents
+					error=0;
 				}else{
 					break;
 				}
