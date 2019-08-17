@@ -1,34 +1,37 @@
 #ifndef NLISTHEADERINCLUDED
 #define NLISTHEADERINCLUDED
 
-// Optional way to change how the list is reallocated. Argument is the new minimum size of the list.
-//#define REALLOCFORMULA(x) (x*2)
-#define REALLOCFORMULA(x) (x)
-
-
 #define ITERATENLIST(_passedStart,_passedCode)					\
 	{															\
 		if (_passedStart!=NULL){								\
-			nList* _currentnList=_passedStart;					\
-			nList* _cachedNext;									\
+			struct nList* _curnList=_passedStart;				\
+			struct nList* _cachedNext;							\
 			do{													\
-				_cachedNext = _currentnList->nextEntry;			\
+				_cachedNext = _curnList->nextEntry;				\
 				_passedCode;									\
-			}while((_currentnList=_cachedNext));				\
+			}while((_curnList=_cachedNext));					\
 		}														\
 	}
 
-#define READYQUITITERATENLIST (_cachedNext=NULL)
-
-typedef struct _goodLinkedList{
-	struct _goodLinkedList* nextEntry;
+struct nList{
+	struct nList* nextEntry;
 	void* data;
-}nList;
+};
 
-nList* addnList(nList** _passed);
-void freenList(nList* _freeThis, char _freeMemory);
-nList* newnList();
-int nListLen(nList* _passed);
-nList* getnList(nList* _passed, int _index);
-void appendList(nList** _source, nList* _addThis);
+struct nList* addnList(struct nList** _passed);
+void freenList(struct nList* _freeThis, char _freeMemory);
+void freenListEntry(struct nList* _freeThis, char _freeMemory);
+// Makes an empty node. If you want to make a new list, set your first node to NULL
+struct nList* lowNewnList();
+int nListLen(struct nList* _passed);
+struct nList* getnList(struct nList* _passed, int _index);
+struct nList* removenList(struct nList** _removeFrom, int _removeIndex);
+struct nList* insertnList(struct nList** _passedList, int _index);
+void appendnList(struct nList** _source, struct nList* _addThis);
+// Pass the pointer to your dest list. Store the return value in another variable.
+struct nList** initSpeedyAddnList(struct nList** _passedList);
+// Pass that thingie returned by initSpeedyAddList and then set it to the return value of this
+struct nList** speedyAddnList(struct nList** _nextHolder, void* _desiredData);
+// Your temp variable thingie is passed to this
+void endSpeedyAddnList(struct nList** _nextHolder);
 #endif

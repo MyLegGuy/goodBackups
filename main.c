@@ -35,6 +35,12 @@
 #define ACTION_UPDATEDB 4 // New files that aren't in the database are hashed and added. Also checked if they have a tag.
 #define ACTION_LISTMISSING 8
 //
+// These must all use characters unused by utf8
+#define FILTER_WILDCARD 0xFF // Note that star supports matching 0 characters.
+//
+#define FLAG_FOLDER 1 // otherwise it's a file
+#define FLAG_FILEPATH 1 // otherwise it's filename only
+//
 struct singleDatabaseEntry{
 	char* hash;
 	char* path;
@@ -42,30 +48,19 @@ struct singleDatabaseEntry{
 };
 struct checkArg{
 	char* rootChop;
-	nList* database;
-	nList* retBad;
+	struct nList* database;
+	struct nList* retBad;
 	char hasChangedDatabase;
 	long chosenActions;
-	char** excludedDirs;
+	
+	char** includeFilters;
+	unsigned char* includeFlags;
+	int numIncluded;
+	char** excludeFilters;
+	unsigned char excludeFlags;
 	int numExcluded;
 };
 //
-char isExcludedDir(char** _passedExcluded, int _numExcluded, const char* _passedDir){
-	int _startIndex=0;
-	int _endIndex=_numExcluded-1;
-	while(_startIndex<=_endIndex){
-		int _midIndex = _startIndex+(_endIndex-_startIndex)/2;
-		int _res = strcmp(_passedDir,_passedExcluded[_midIndex]);
-		if (_res<0){
-			_endIndex=_midIndex-1;
-		}else if (_res>0){
-			_startIndex=_midIndex+1;
-		}else{
-			return 1;
-		}
-	}
-	return 0;
-}
 char fileExists(const char* _passedPath){
 	return (access(_passedPath, R_OK)!=-1);
 }
@@ -100,7 +95,118 @@ void removeNewline(char* _toRemove){
 		}
 	}
 }
-void writeDatabase(nList* _passedDatabase, char* _passedOut){
+
+struct tempLoadFilter{
+	char* path;
+	unsigned char flag;
+};
+int loadFilter(const char* _filepath, char*** _retFilters, unsigned char** _retFlags){
+	/*
+	struct nList* _readExcludes=NULL;
+	FILE* fp = fopen(args[_possibleIndex],"rb");
+	while(!feof(fp)){
+		size_t _readSize=0;
+		char* _currentLine=NULL;
+		if (getline(&_currentLine,&_readSize,fp)==-1){
+			free(_currentLine);
+			break;
+		}
+		removeNewline(_currentLine);
+		int _cachedStrlen = strlen(_currentLine);
+		if (_cachedStrlen<=1){
+			free(_currentLine);
+			continue;
+		}
+		if (_currentLine[_cachedStrlen-1]==SEPARATOR){
+			_currentLine[_cachedStrlen-1]='\0';
+		}
+		if (_readExcludes==NULL){
+			_readExcludes=newnList();
+			_readExcludes->data=_currentLine;
+		}else{
+			struct nList* _curCheck = _readExcludes;
+			while(1){
+				if (strcmp(_currentLine,_curCheck->data)<0){
+					void* _oldData = _curCheck->data;
+					void* _oldNext = _curCheck->nextEntry;
+					_curCheck->data=_currentLine;
+					_curCheck->nextEntry = newnList();
+					_curCheck->nextEntry->data = _oldData;
+					_curCheck->nextEntry->nextEntry=_oldNext;
+					break;
+				}
+				if (_curCheck->nextEntry!=NULL){
+					_curCheck=_curCheck->nextEntry;
+				}else{
+					_curCheck->nextEntry = newnList();
+					_curCheck->nextEntry->data=_currentLine;
+					break;
+				}
+			}
+		}
+	}
+	fclose(fp);
+	// convert to array
+	_numExcludedFolders = nListLen(_readExcludes);
+	_excludedFolders = malloc(sizeof(char*)*_numExcludedFolders);
+	i=0;
+	ITERATENLIST(_readExcludes,{_excludedFolders[i++]=_curnList->data;});
+	freenList(_readExcludes,0);
+	*/
+}
+
+void fixFilter(char* _filter){
+	int i;
+	int _cachedStrlen = strlen(_filter);
+	for (i=0;i<_cachedStrlen;++i){
+		switch(_filter[i]){
+			case '*':
+				_filter[i]=FILTER_WILDCARD;
+				break;
+			case '\\':
+				if (i==_cachedStrlen-1){
+					printf("invalid backslash\n");
+					exit(1);
+				}
+				if (_filter[i+1]=='*' || _filter[i+1]=='\\'){
+					memmove(&(_filter[i]),&(_filter[i+1]),_cachedStrlen-i-1);
+					_filter[--_cachedStrlen]='\0';
+				}else{
+					printf("invalid backslash\n");
+					exit(1);
+				}
+				break;
+		}
+	}
+}
+char filterMatches(const unsigned char* _test, const unsigned char* _filter){
+	int _filterPos;
+	int _testPos;
+	int _filterLen=strlen(_filter);
+	int _testLen=strlen(_test);
+	for (_filterPos=0,_testPos=0;_filterPos<_filterLen && _testPos<_testLen;++_filterPos){
+		if (_filter[_filterPos]!=(unsigned char)FILTER_WILDCARD){
+			if (_test[_testPos]!=_filter[_filterPos]){
+				return 0;
+			}
+			++_testPos;
+		}else{ // process wildcard
+			if (_filterPos==_filterLen-1){ // If it's at the end of the string, that means we only needed to match up to here.
+				return 1;
+			}else{
+				// Process wildcard, just jump to the next required character. There should never be two wildcards in a row
+				unsigned char* _newString = strchr(_test,_filter[_filterPos+1]);
+				if (_newString==NULL){
+					return 0;
+				}
+				_testPos=(_newString-_test)+1;
+				++_filterPos; // Because using this wildcard involves matching the next character, go on
+			}
+		}
+	}
+	return (_filterPos==_filterLen && _testPos==_testLen);
+}
+void writeDatabase(struct nList* _passedDatabase, char* _passedOut){
 	char _isStdout=0;
 	FILE* fp = fopen(_passedOut,"wb");
 	if (fp==NULL){
@@ -122,7 +228,7 @@ void writeDatabase(nList* _passedDatabase, char* _passedOut){
 			fp = stdout;
 			_isStdout=1;
 			//ITERATENLIST(_passedDatabase,{
-			//	struct singleDatabaseEntry* _currentEntry = _currentnList->data;
+			//	struct singleDatabaseEntry* _currentEntry = _curnList->data;
 			//	printf("%s %s\n",_currentEntry->nane,_currentEntry->hash);
 			//})
 			//return;
@@ -130,7 +236,7 @@ void writeDatabase(nList* _passedDatabase, char* _passedOut){
 	}
 	//
 	ITERATENLIST(_passedDatabase,{
-		struct singleDatabaseEntry* _currentEntry = _currentnList->data;
+		struct singleDatabaseEntry* _currentEntry = _curnList->data;
 		if (fprintf(fp,"%s %s\n",_currentEntry->path,_currentEntry->hash)!=(strlen(_currentEntry->path)+1+strlen(_currentEntry->hash)+strlen("\n"))){
 			printf("wrote wrong number of bytes\n");
 		}
@@ -140,13 +246,13 @@ void writeDatabase(nList* _passedDatabase, char* _passedOut){
 		fclose(fp);
 	}
 }
-nList* readDatabase(char* _passedDatabaseFile){
+struct nList* readDatabase(char* _passedDatabaseFile){
 	FILE* fp = fopen(_passedDatabaseFile,"rb");
 	if (fp==NULL){
 		printf("Could not open for reading %s\n",_passedDatabaseFile);
 		return NULL;
 	}
-	nList* _ret = NULL;
+	struct nList* _ret = NULL;
 	while(!feof(fp)){
 		size_t _lastRead=0;
 		char* _currentLine=NULL;
@@ -182,17 +288,17 @@ nList* readDatabase(char* _passedDatabaseFile){
 	fclose(fp);
 	return _ret;
 }
-void freeDatabase(nList* _passedList){
+void freeDatabase(struct nList* _passedList){
 	ITERATENLIST(_passedList,{
-		free(((struct singleDatabaseEntry*)_currentnList->data)->path);
-		free(((struct singleDatabaseEntry*)_currentnList->data)->hash);
-		free(_currentnList->data);
-		free(_currentnList);
+		free(((struct singleDatabaseEntry*)_curnList->data)->path);
+		free(((struct singleDatabaseEntry*)_curnList->data)->hash);
+		free(_curnList->data);
+		free(_curnList);
 	})
 }
-void resetDatabaseSeen(nList* _passedList){
+void resetDatabaseSeen(struct nList* _passedList){
 	ITERATENLIST(_passedList,{
-		((struct singleDatabaseEntry*)_currentnList->data)->seen=0;
+		((struct singleDatabaseEntry*)_curnList->data)->seen=0;
 	})
 }
 char readABit(FILE* fp, char* _destBuffer, long* _numRead, long _maxRead){
@@ -334,9 +440,9 @@ char* hashFile(const char* _passedFilename){
 	}
 }
 
-struct singleDatabaseEntry* getFromDatabase(nList* _passedDatabase, const char* _searchName){
+struct singleDatabaseEntry* getFromDatabase(struct nList* _passedDatabase, const char* _searchName){
 	ITERATENLIST(_passedDatabase,{
-		struct singleDatabaseEntry* _currentEntry = _currentnList->data;
+		struct singleDatabaseEntry* _currentEntry = _curnList->data;
 		if (strcmp(_searchName,_currentEntry->path)==0){
 			return _currentEntry;
 		}
@@ -427,6 +533,7 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 		}
 		free(_actualHash);
 	}else{
+		/*
 		if (isExcludedDir(_passedCheck->excludedDirs,_passedCheck->numExcluded,fpath)){
 			return 2;
 		}else{
@@ -434,20 +541,19 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 				printf("Unknown thing passed.\n%d:%s\n",typeflag,fpath);
 				return 1;
 			}
-		}
+			}*/
+		return 1;
 	}
 	return 0;
 }
 // Returns list of broken files
-char checkDir(nList** _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified, long _passedActions, int _numExcluded, char** _passedExcluded, nList** _retBad){
+char checkDir(struct nList** _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified, long _passedActions, struct nList** _retBad){
 	struct checkArg myCheckArgs;
 	myCheckArgs.database = *_passedDatabase;
 	myCheckArgs.retBad = NULL; 
 	myCheckArgs.rootChop = _passedDirectory;
 	myCheckArgs.hasChangedDatabase=0;
 	myCheckArgs.chosenActions = _passedActions;
-	myCheckArgs.numExcluded=_numExcluded;
-	myCheckArgs.excludedDirs=_passedExcluded;
 	char _ret = nftwArg(_passedDirectory,checkSingleFile,5,FOLLOWSYMS ? 0 : FTW_PHYS, &myCheckArgs);
 	*_ret_DatabaseModified = myCheckArgs.hasChangedDatabase;
 	*_passedDatabase = myCheckArgs.database;
@@ -469,8 +575,6 @@ int main(int argc, char** args){
 		return 0;
 	}
 	int i;
-	char** _excludedFolders=NULL;
-	int _numExcludedFolders=0;
 	int _numFolders=argc-2;
 	long _passedActions = 0;
 	char _addFromPrimaryOnly=1;
@@ -515,6 +619,7 @@ int main(int argc, char** args){
 	}
 	int _possibleIndex = hasArg("--exclude",argc,args);
 	if (_possibleIndex){
+		/*
 		_numFolders-=2;
 		nList* _readExcludes=NULL;
 		FILE* fp = fopen(args[_possibleIndex],"rb");
@@ -564,8 +669,9 @@ int main(int argc, char** args){
 		_numExcludedFolders = nListLen(_readExcludes);
 		_excludedFolders = malloc(sizeof(char*)*_numExcludedFolders);
 		i=0;
-		ITERATENLIST(_readExcludes,{_excludedFolders[i++]=_currentnList->data;})
+		ITERATENLIST(_readExcludes,{_excludedFolders[i++]=_curnList->data;})
 		freenList(_readExcludes,0);
+		*/
 	}
 	//
 	for (i=0;i<_numFolders;++i){
@@ -587,19 +693,19 @@ int main(int argc, char** args){
 		return 1;
 	}
 	/////////////////
-	nList* _currentDatabase = readDatabase(args[1]);
-	nList* _brokenLists[_numFolders];
+	struct nList* _currentDatabase = readDatabase(args[1]);
+	struct nList* _brokenLists[_numFolders];
 	for (i=0;i<_numFolders;++i){
 		printf("Now checking folder %s\n",args[i+2]);
 		char _needResaveDatabase=0;
-		if (checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase, _passedActions,_numExcludedFolders,_excludedFolders,&_brokenLists[i])){
+		if (checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase, _passedActions,&_brokenLists[i])){
 			printf("Checking failed!\n");
 			return 1;
 		}
 		if (_brokenLists[i]!=NULL){
 			printf("=====\nBROKEN FILES\n======\n");
 			ITERATENLIST(_brokenLists[i],{
-				struct singleDatabaseEntry* _badEntry = _currentnList->data;
+				struct singleDatabaseEntry* _badEntry = _curnList->data;
 				struct singleDatabaseEntry* _expectedEntry = getFromDatabase(_currentDatabase,_badEntry->path);
 				if (_expectedEntry!=NULL){
 					printf(REPORTMESSAGE,BADMESSAGE, _badEntry->hash, _expectedEntry->hash, _badEntry->path);
@@ -618,7 +724,7 @@ int main(int argc, char** args){
 		if ((_passedActions & ACTION_COPYMISSING) || (_passedActions & ACTION_LISTMISSING)){
 			// Look for any files that should've been there but weren't
 			ITERATENLIST(_currentDatabase,{
-				struct singleDatabaseEntry* _currentEntry = _currentnList->data;
+				struct singleDatabaseEntry* _currentEntry = _curnList->data;
 				if (!_currentEntry->seen){
 					char* _destPath = malloc(strlen(_currentEntry->path)+strlen(args[i+2])+1);
 					strcpy(_destPath,args[i+2]);
