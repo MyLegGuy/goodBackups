@@ -27,8 +27,40 @@ Just append these to the end of your command. If you spell them wrong, they'll b
 	* By default, this is disabled and only files from primary folder are added to database.
 		* Be careful. If you delete a file from the primary folder and the database and then run this program, it'll bring the file back from the dead.
 	* If you enable this option, files added to the database from the backup folder won't affect the folders before it until the next run.
+--include <include list file>
 --exclude <exclude list file>
-	Give it a file with a list of folders to exclude. One path per line, all paths absolute. 
+
+Excluding/Including Specific Files
+----------------------------------
+Pass these as optional args:
+--include <Include File List path>
+--exclude <Exclude File List path>
+If you pass an include list, that means every other file is excluded by default.
+You can pass an exclude list to exclude only the files you don't want and include everything else.
+You can pass both at the same time. The exclude list would exclude files that already passed the include file list filter. This is useful if you use wildcards.
+Format of the include/exclude file list:
+Each line has one pattern.
+Each pattern starts with a letter to signify how it matches. Here are your options:
+'f' - match files based on just their names
+'d' - match directories based on just their names
+'a' - match both files and directories based on just their names (all)
+You you make the letter capital if you want to match based on the full filepath. So 'F', 'D', and 'A' are also options.
+After that letter you put a space.
+After the space goes the pattern.
+The only special thing it supports is '*' as a wildcard. Using '*' will match 0 or more wildcard characters.
+If you want an actual '*', use '\*'. And if you want a backslash, use '\\'.
+Comments must go on their own line and start with '#'.
+Example exclude list:
+# exclude any file named "happy"
+f happy
+# exclude any file with a name starting with "[Horrible"
+f [Horrible*
+# exclude any file named '*\"
+f \*\\
+# exclude the directory named "garbage"
+d garbage
+# exclude the directory at /tmp/bla
+D /tmp/bla
 
 Modes
 -----
