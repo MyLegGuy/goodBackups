@@ -2,7 +2,7 @@ goodBackups - Free backup and hashing software for Linux.
 
 About
 -----
-Given a database destination file and as many folder paths as you want:
+Given a database, destination file, and as many folder paths as you want:
 It looks through the folder. 
 If a certain file's name is in the database, it hashes it and compares its hash to the one in the database. If it's wrong, it tells you.
 If a certian file's name isn't in the database, it hahes it and adds it to the database.
