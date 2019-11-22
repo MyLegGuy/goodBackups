@@ -659,6 +659,7 @@ int main(int argc, char** args){
 	int _numFolders=argc-2;
 	long _passedActions = 0;
 	char _addFromPrimaryOnly=1;
+	char _primaryCanRestoreMissing=0;
 	if (access(args[1],F_OK)==-1){ // If our target database doesn't exist
 		if (hasArg("--newdb",argc,args)){
 			--_numFolders;
@@ -697,6 +698,9 @@ int main(int argc, char** args){
 	}
 	if (hasArg("--addFromBackups",argc,args)){
 		_addFromPrimaryOnly=0;
+	}
+	if (hasArg("--primaryCanRestoreMissing",argc,args)){
+		_primaryCanRestoreMissing=1;
 	}
 	int _possibleIndex = hasArg("--include",argc,args);
 	if (_possibleIndex){
@@ -764,7 +768,7 @@ int main(int argc, char** args){
 					char* _destPath = malloc(strlen(_currentEntry->path)+strlen(args[i+2])+1);
 					strcpy(_destPath,args[i+2]);
 					strcat(_destPath,_currentEntry->path);
-					if (_passedActions & ACTION_COPYMISSING){
+					if (_passedActions & ACTION_COPYMISSING && (i!=0 || _primaryCanRestoreMissing)){
 						printf("Didn't see %s. Will try and put.\n",_destPath);
 						char _worked=0;
 						int j;
