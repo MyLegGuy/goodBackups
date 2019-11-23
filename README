@@ -7,7 +7,7 @@ It looks through the folder.
 If a certain file's name is in the database, it hashes it and compares its hash to the one in the database. If it's wrong, it tells you.
 If a certian file's name isn't in the database, it hahes it and adds it to the database.
 Once it's done looking through the folder, it looks for all database entries that were not used. Those files were missing from the folder.
-It checks the other folders you supplied and see if they have the missing files. If so, the files are copied and verified.
+It checks the other folders you supplied and see if they have the missing files. If so, the files are copied.
 This process repeats for all other folders supplied.
 
 Usage
@@ -31,6 +31,9 @@ Just append these to the end of your command. If you spell them wrong, they'll b
 --exclude <exclude list file>
 --primaryCanRestoreMissing
 	* By default, files missing from the primary folder will not be restored automatically like they would be if it was a backup folder. This enables restoring files missing from primary folder.
+--missingCanBeOldFile
+	* By default, only files that were just found in the primary folders will be added to the backup folders. This means that if a file in a backup folder goes missing, it won't be silently copied over again.
+	* This allows files that were already in the database (old files) to be found to be missing in a backup folder and then copied to the backup folder.
 
 Excluding/Including Specific Files
 ----------------------------------

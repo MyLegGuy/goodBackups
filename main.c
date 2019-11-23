@@ -664,6 +664,7 @@ int main(int argc, char** args){
 	long _passedActions = 0;
 	char _addFromPrimaryOnly=1;
 	char _primaryCanRestoreMissing=0;
+	char _missingCanBeOldFile=0;
 	if (access(args[1],F_OK)==-1){ // If our target database doesn't exist
 		if (hasArg("--newdb",argc,args)){
 			--_numFolders;
@@ -706,6 +707,9 @@ int main(int argc, char** args){
 	if (hasArg("--primaryCanRestoreMissing",argc,args)){
 		_primaryCanRestoreMissing=1;
 	}
+	if (hasArg("--missingCanBeOldFile",argc,args)){
+		_missingCanBeOldFile=1;
+	}
 	int _possibleIndex = hasArg("--include",argc,args);
 	if (_possibleIndex){
 		_numFolders-=2;
@@ -736,7 +740,8 @@ int main(int argc, char** args){
 		return 1;
 	}
 	/////////////////
-	struct nList* _currentDatabase = readDatabase(args[1]);
+	int _origDatabaseLen;
+	struct nList* _currentDatabase = readDatabase(args[1],&_origDatabaseLen);
 	struct nList* _brokenLists[_numFolders];
 	for (i=0;i<_numFolders;++i){
 		printf("Now checking folder %s\n",args[i+2]);
@@ -765,40 +770,46 @@ int main(int argc, char** args){
 			printf("No database changes.\n");
 		}
 		if ((_passedActions & ACTION_COPYMISSING) || (_passedActions & ACTION_LISTMISSING)){
+			int _curCheckIndex=0;
 			// Look for any files that should've been there but weren't
 			ITERATENLIST(_currentDatabase,{
 				struct singleDatabaseEntry* _currentEntry = _curnList->data;
 				if (!_currentEntry->seen){
-					char* _destPath = malloc(strlen(_currentEntry->path)+strlen(args[i+2])+1);
-					strcpy(_destPath,args[i+2]);
-					strcat(_destPath,_currentEntry->path);
-					if (_passedActions & ACTION_COPYMISSING && (i!=0 || _primaryCanRestoreMissing)){
-						printf("Didn't see %s. Will try and put.\n",_destPath);
-						// find a valid copy in another folder
-						char _worked=0;
-						int j;
-						for (j=0;j<_numFolders && !_worked;++j){
-							if (j==i){
-								continue;
+					if (_curCheckIndex<_origDatabaseLen || _missingCanBeOldFile){
+						char* _destPath = malloc(strlen(_currentEntry->path)+strlen(args[i+2])+1);
+						strcpy(_destPath,args[i+2]);
+						strcat(_destPath,_currentEntry->path);
+						if (_passedActions & ACTION_COPYMISSING && (i!=0 || _primaryCanRestoreMissing)){
+							printf("Didn't see %s. Will try and put.\n",_destPath);
+							// find a valid copy in another folder
+							char _worked=0;
+							int j;
+							for (j=0;j<_numFolders && !_worked;++j){
+								if (j==i){
+									continue;
+								}
+								// get path of a working copy of this file
+								char* _tempPath = malloc(strlen(_currentEntry->path)+strlen(args[j+2])+1);
+								strcpy(_tempPath,args[j+2]);
+								strcat(_tempPath,_currentEntry->path);
+								if (fileExists(_tempPath)){
+									printf("Copying %s to %s\n",_tempPath,_destPath);
+									copyFile(_tempPath,_destPath);
+								}
+								free(_tempPath);
 							}
-							// get path of a working copy of this file
-							char* _tempPath = malloc(strlen(_currentEntry->path)+strlen(args[j+2])+1);
-							strcpy(_tempPath,args[j+2]);
-							strcat(_tempPath,_currentEntry->path);
-							if (fileExists(_tempPath)){
-								printf("Copying %s to %s\n",_tempPath,_destPath);
-								copyFile(_tempPath,_destPath);
+							if (!_worked){
+								printf("Failed to find a copy of %s to copy to %s.\n",_currentEntry->path,_destPath);
 							}
-							free(_tempPath);
+						}else{
+							printf("Didn't see %s.\n",_destPath);
 						}
-						if (!_worked){
-							printf("Failed to find a copy of %s to copy to %s.\n",_currentEntry->path,_destPath);
-						}
+						free(_destPath);
 					}else{
-						printf("Didn't see %s.\n",_destPath);
+						printf("old file is missing: %s\n",_currentEntry->path);
 					}
-					free(_destPath);
 				}
+				++_curCheckIndex;
 			})
 		}
 		resetDatabaseSeen(_currentDatabase);
