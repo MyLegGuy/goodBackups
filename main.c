@@ -107,14 +107,14 @@ void fixFilter(char* _filter){
 				break;
 			case '\\':
 				if (i==_cachedStrlen-1){
-					printf("invalid backslash\n");
+					fprintf(stderr,"invalid backslash\n");
 					exit(1);
 				}
 				if (_filter[i+1]=='*' || _filter[i+1]=='\\'){
 					memmove(&(_filter[i]),&(_filter[i+1]),_cachedStrlen-i-1);
 					_filter[--_cachedStrlen]='\0';
 				}else{
-					printf("invalid backslash\n");
+					fprintf(stderr,"invalid backslash\n");
 					exit(1);
 				}
 				break;
@@ -146,7 +146,7 @@ struct filterEntry* loadFilter(const char* _filepath, int* _retLen){
 			_currentLine[_cachedStrlen-1]='\0';
 		}
 		if (_currentLine[1]!=' '){
-			printf("invalid line format %s\n",_currentLine);
+			fprintf(stderr,"invalid line format %s\n",_currentLine);
 			exit(1);
 		}
 		struct filterEntry* _curEntry = malloc(sizeof(struct filterEntry));
@@ -169,7 +169,7 @@ struct filterEntry* loadFilter(const char* _filepath, int* _retLen){
 				_curEntry->flag|=FLAG_FOLDER;
 				break;
 			default:
-				printf("invalid type specifier %c\n",_currentLine[0]);
+				fprintf(stderr,"invalid type specifier %c\n",_currentLine[0]);
 				exit(1);
 				break;
 		}
@@ -220,22 +220,22 @@ void writeDatabase(struct nList* _passedDatabase, char* _passedOut){
 	char _isStdout=0;
 	FILE* fp = fopen(_passedOut,"wb");
 	if (fp==NULL){
-		printf("Failed to open %s\n",_passedOut);
+		fprintf(stderr,"Failed to open %s\n",_passedOut);
 		char* _possibleNewFilename = strdup(tmpnam(NULL));
 		if (_possibleNewFilename==NULL){
-			printf("Couldn't make temp filename.");
+			fprintf(stderr,"Couldn't make temp filename.");
 		}else{
 			fp = fopen(_possibleNewFilename,"wb");
 			if (fp==NULL){
-				printf("Failed to open temp file at %s\n",_possibleNewFilename);
+				fprintf(stderr,"Failed to open temp file at %s\n",_possibleNewFilename);
 			}else{
-				printf("Writing to temp file at %s\n",_possibleNewFilename);
+				fprintf(stderr,"Writing to temp file at %s\n",_possibleNewFilename);
 			}
 		}
 		free(_possibleNewFilename);
 		if (fp==NULL){
-			printf("Falling back on writing to stdout.");
-			fp = stdout;
+			fprintf(stderr,"Falling back on writing database to stderr.");
+			fp = stderr;
 			_isStdout=1;
 			//ITERATENLIST(_passedDatabase,{
 			//	struct singleDatabaseEntry* _currentEntry = _curnList->data;
@@ -248,7 +248,7 @@ void writeDatabase(struct nList* _passedDatabase, char* _passedOut){
 	ITERATENLIST(_passedDatabase,{
 		struct singleDatabaseEntry* _currentEntry = _curnList->data;
 		if (fprintf(fp,"%s %s\n",_currentEntry->path,_currentEntry->hash)!=(strlen(_currentEntry->path)+1+strlen(_currentEntry->hash)+strlen("\n"))){
-			printf("wrote wrong number of bytes\n");
+			fprintf(stderr,"wrote wrong number of bytes\n");
 		}
 	})
 	//
@@ -291,7 +291,7 @@ char isFiltered(const char* _passedPath, unsigned char _passedType, int _numFilt
 struct nList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
 	FILE* fp = fopen(_passedDatabaseFile,"rb");
 	if (fp==NULL){
-		printf("Could not open for reading %s\n",_passedDatabaseFile);
+		fprintf(stderr,"Could not open for reading %s\n",_passedDatabaseFile);
 		return NULL;
 	}
 	if (_retNumRead){
@@ -314,7 +314,7 @@ struct nList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
 		//char* _spaceSpot = strchr(_currentLine,DATABASESEPARATOR);
 		const char* _spaceSpot = findCharBackwards(&(_currentLine[strlen(_currentLine)-1]),_currentLine,DATABASESEPARATOR);
 		if (_spaceSpot==NULL){
-			printf("corrupted database line %s\n",_currentLine);
+			fprintf(stderr,"corrupted database line %s\n",_currentLine);
 			continue;
 		}
 		struct singleDatabaseEntry* _currentEntry = malloc(sizeof(struct singleDatabaseEntry));
@@ -365,13 +365,13 @@ char lowCopyFile(const char* _srcPath, const char* _destPath, char _canMakeDirs)
 			size_t _lastRead;
 			while (!readABit(_sourcefp,_currentBit,&_lastRead,COPYBUFF)){
 				if (fwrite(_currentBit,1,_lastRead,_destfp)!=_lastRead){
-					printf("wrote wrong number of bytes.\n");
+					fprintf(stderr,"wrote wrong number of bytes.\n");
 				}
 			}
 			free(_currentBit);
 			fclose(_sourcefp);
 		}else{
-			printf("Failed to open for reading %s\n",_srcPath);
+			fprintf(stderr,"Failed to open for reading %s\n",_srcPath);
 		}
 		fclose(_destfp);
 	}else{
@@ -401,7 +401,7 @@ char lowCopyFile(const char* _srcPath, const char* _destPath, char _canMakeDirs)
 					if (mkdir(_tempPath,0777)==0){
 						printf("Make directory: %s\n",_tempPath);
 					}else{
-						printf("Failed to make directory %s\n",_tempPath);
+						fprintf(stderr,"Failed to make directory %s\n",_tempPath);
 					}
 				}
 			}
@@ -411,7 +411,7 @@ char lowCopyFile(const char* _srcPath, const char* _destPath, char _canMakeDirs)
 		if (_shouldRetry){
 			lowCopyFile(_srcPath,_destPath,0);
 		}else{
-			printf("Failed to open for writing %s\n",_destPath);
+			fprintf(stderr,"Failed to open for writing %s\n",_destPath);
 			return 1;
 		}
 	}
@@ -483,7 +483,7 @@ char* hashFile(const char* _passedFilename){
 		sprintf(_ret,"%0"HASHLENSTR"lX",_finalHash);
 		return _ret;
 	}else{
-		printf("Failed to open %s\n",_passedFilename);
+		fprintf(stderr,"Failed to open %s\n",_passedFilename);
 		return NULL;
 	}
 }
@@ -502,7 +502,7 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 	struct checkArg* _passedCheck = _arg;
 	int _cachedRootStrlen = strlen(_passedCheck->rootChop);
 	if (strncmp(fpath,_passedCheck->rootChop,_cachedRootStrlen)!=0){
-		printf("Bad root to path. Path is: %s root is %s\n",fpath,_passedCheck->rootChop);
+		fprintf(stderr,"Bad root to path. Path is: %s root is %s\n",fpath,_passedCheck->rootChop);
 		return 1;
 	}
 	unsigned char _filterTypePass;
@@ -549,12 +549,12 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 
 			if (_matchingEntry!=NULL){
 				if (_matchingEntry->seen){
-					printf("What? Already seen %s?\n",_matchingEntry->path);
+					fprintf(stderr,"What? Already seen %s?\n",_matchingEntry->path);
 				}
 				_matchingEntry->seen=1;
 				if (_passedCheck->chosenActions & ACTION_CHECKEXISTING){ // Hash must exist to get here
 					_fileMatched=(strcmp(_actualHash,_matchingEntry->hash)==0);
-					printf(REPORTMESSAGE,_fileMatched ? OKMESSAGE : BADMESSAGE, _actualHash, _matchingEntry->hash, fpath);
+					fprintf(_fileMatched ? stdout : stderr,REPORTMESSAGE,_fileMatched ? OKMESSAGE : BADMESSAGE, _actualHash, _matchingEntry->hash, fpath);
 				}else{
 					printf("Seen %s\n",fpath);
 					_fileMatched=2;
@@ -578,7 +578,7 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 						if (_possibleTagHash!=NULL){ // Not in the database, but the filename has a hash we can use.
 							//printf(ADDNEWWITHHASHMESSAGE,_newEntry->path);
 							_fileMatched=(strcmp(_actualHash,_possibleTagHash)==0);
-							printf(REPORTMESSAGE,_fileMatched ? OKMESSAGE : BADMESSAGE, _actualHash, _possibleTagHash, fpath);
+							fprintf(_fileMatched ? stdout : stderr,REPORTMESSAGE,_fileMatched ? OKMESSAGE : BADMESSAGE, _actualHash, _possibleTagHash, fpath);
 							if (_fileMatched){
 								// Can reuse our struct because our file matched so we don't need to add to bad list
 								_newEntry->hash = _possibleTagHash;
@@ -601,7 +601,7 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 						}
 						_passedCheck->hasChangedDatabase=1;
 					}else{
-						printf("(way2)Failed to hash file %s\n",fpath);
+						fprintf(stderr,"(way2)Failed to hash file %s\n",fpath);
 					}
 				}else{
 					free(_newEntry->path);
@@ -610,12 +610,12 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 				}
 			}
 		}else{
-			printf("(way1)Failed to hash file %s\n",fpath);
+			fprintf(stderr,"(way1)Failed to hash file %s\n",fpath);
 		}
 		free(_actualHash);
 	}else{
 		if (typeflag!=FTW_D){
-			printf("Unknown thing passed.\n%d:%s\n",typeflag,fpath);
+			fprintf(stderr,"Unknown thing passed.\n%d:%s\n",typeflag,fpath);
 			return 1;
 		}
 	}
@@ -673,17 +673,17 @@ int main(int argc, char** args){
 			if (fp!=NULL){
 				fclose(fp);
 			}else{
-				printf("Failed to create newfile at %s\n",args[1]);
+				fprintf(stderr,"Failed to create newfile at %s\n",args[1]);
 				return 1;
 			}
 			printf("Made new database.\n");
 		}else{
-			printf("%s does not exist. To make a new database, pass --newdb\n",args[1]);
+			fprintf(stderr,"%s does not exist. To make a new database, pass --newdb\n",args[1]);
 			return 1;
 		}
 	}
 	if (access(args[1],W_OK)==-1){
-		printf("can't write to database file at %s\n",args[1]);
+		fprintf(stderr,"can't write to database file at %s\n",args[1]);
 		return 1;
 	}
 	//
@@ -723,20 +723,20 @@ int main(int argc, char** args){
 	//
 	for (i=0;i<_numFolders;++i){
 		if (args[i+2][strlen(args[i+2])-1]!=SEPARATOR){
-			printf("All folder names need to end with '%c'. Failed on %s\n",SEPARATOR,args[i+2]);
+			fprintf(stderr,"All folder names need to end with '%c'. Failed on %s\n",SEPARATOR,args[i+2]);
 			return 1;
 		}
 		if (args[i+2][0]=='.'){
-			printf("All folder names should be absolute. Failed on %s\n",args[i+2]);
+			fprintf(stderr,"All folder names should be absolute. Failed on %s\n",args[i+2]);
 			return 1;
 		}
 		if (!dirExists(args[i+2])){
-			printf("Directory does not exist %s\n",args[i+2]);
+			fprintf(stderr,"Directory does not exist %s\n",args[i+2]);
 			return 1;
 		}
 	}
 	if (_passedActions==0){
-		printf("No actions specified.\n");
+		fprintf(stderr,"No actions specified.\n");
 		return 1;
 	}
 	/////////////////
@@ -744,21 +744,22 @@ int main(int argc, char** args){
 	struct nList* _currentDatabase = readDatabase(args[1],&_origDatabaseLen);
 	struct nList* _brokenLists[_numFolders];
 	for (i=0;i<_numFolders;++i){
+		fprintf(stderr,"Now checking folder %s\n",args[i+2]);
 		printf("Now checking folder %s\n",args[i+2]);
 		char _needResaveDatabase=0;
 		if (checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase,_passedActions,_numIncludeFilters,_includeFilters,_numExcludeFilters,_excludeFilters,&_brokenLists[i])){
-			printf("Checking failed!\n");
+			fprintf(stderr,"Checking failed!\n");
 			return 1;
 		}
 		if (_brokenLists[i]!=NULL){
-			printf("=====\nBROKEN FILES\n======\n");
+			fprintf(stderr,"=====\nBROKEN FILES\n======\n");
 			ITERATENLIST(_brokenLists[i],{
 				struct singleDatabaseEntry* _badEntry = _curnList->data;
 				struct singleDatabaseEntry* _expectedEntry = getFromDatabase(_currentDatabase,_badEntry->path);
 				if (_expectedEntry!=NULL){
-					printf(REPORTMESSAGE,BADMESSAGE, _badEntry->hash, _expectedEntry->hash, _badEntry->path);
+					fprintf(stderr,REPORTMESSAGE,BADMESSAGE, _badEntry->hash, _expectedEntry->hash, _badEntry->path);
 				}else{
-					printf("Well, it's broken, but couldn't find the following file in the database:\n\t%s:%s\n",_badEntry->path,_badEntry->hash);
+					fprintf(stderr,"Well, it's broken, but couldn't find the following file in the database:\n\t%s:%s\n",_badEntry->path,_badEntry->hash);
 				}
 			})
 		}else{
@@ -799,14 +800,14 @@ int main(int argc, char** args){
 								free(_tempPath);
 							}
 							if (!_worked){
-								printf("Failed to find a copy of %s to copy to %s.\n",_currentEntry->path,_destPath);
+								fprintf(stderr,"Failed to find a copy of %s to copy to %s.\n",_currentEntry->path,_destPath);
 							}
 						}else{
-							printf("Didn't see %s.\n",_destPath);
+							fprintf(stderr,"Didn't see %s.\n",_destPath);
 						}
 						free(_destPath);
 					}else{
-						printf("old file is missing: %s\n",_currentEntry->path);
+						fprintf(stderr,"old file is missing: %s\n",_currentEntry->path);
 					}
 				}
 				++_curCheckIndex;
