@@ -776,7 +776,7 @@ int main(int argc, char** args){
 			ITERATENLIST(_currentDatabase,{
 				struct singleDatabaseEntry* _currentEntry = _curnList->data;
 				if (!_currentEntry->seen){
-					if (_curCheckIndex<_origDatabaseLen || _missingCanBeOldFile){
+					if (_curCheckIndex>=_origDatabaseLen || _missingCanBeOldFile){
 						char* _destPath = malloc(strlen(_currentEntry->path)+strlen(args[i+2])+1);
 						strcpy(_destPath,args[i+2]);
 						strcat(_destPath,_currentEntry->path);
@@ -796,6 +796,7 @@ int main(int argc, char** args){
 								if (fileExists(_tempPath)){
 									printf("Copying %s to %s\n",_tempPath,_destPath);
 									copyFile(_tempPath,_destPath);
+									_worked=1;
 								}
 								free(_tempPath);
 							}
@@ -807,7 +808,7 @@ int main(int argc, char** args){
 						}
 						free(_destPath);
 					}else{
-						fprintf(stderr,"old file is missing: %s\n",_currentEntry->path);
+						fprintf(stderr,"old file (%d/%d) is missing: %s\n",_curCheckIndex,_origDatabaseLen-1,_currentEntry->path);
 					}
 				}
 				++_curCheckIndex;
