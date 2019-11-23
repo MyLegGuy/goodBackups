@@ -256,7 +256,6 @@ void writeDatabase(struct nList* _passedDatabase, char* _passedOut){
 		fclose(fp);
 	}
 }
-
 // passed filename length is 0, function may fail
 char isFiltered(const char* _passedPath, unsigned char _passedType, int _numFilters, struct filterEntry* _filters){
 	const char* _asFilename=_passedPath;
@@ -289,12 +288,14 @@ char isFiltered(const char* _passedPath, unsigned char _passedType, int _numFilt
 	}
 	return 0;
 }
-
-struct nList* readDatabase(char* _passedDatabaseFile){
+struct nList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
 	FILE* fp = fopen(_passedDatabaseFile,"rb");
 	if (fp==NULL){
 		printf("Could not open for reading %s\n",_passedDatabaseFile);
 		return NULL;
+	}
+	if (_retNumRead){
+		*_retNumRead=0;
 	}
 	struct nList* _ret = NULL;
 	while(!feof(fp)){
@@ -328,6 +329,9 @@ struct nList* readDatabase(char* _passedDatabaseFile){
 
 		addnList(&_ret)->data = _currentEntry;
 		free(_currentLine);
+		if (_retNumRead){
+			*_retNumRead+=1;
+		}
 	}
 	fclose(fp);
 	return _ret;
@@ -770,42 +774,20 @@ int main(int argc, char** args){
 					strcat(_destPath,_currentEntry->path);
 					if (_passedActions & ACTION_COPYMISSING && (i!=0 || _primaryCanRestoreMissing)){
 						printf("Didn't see %s. Will try and put.\n",_destPath);
+						// find a valid copy in another folder
 						char _worked=0;
 						int j;
-						for (j=0;j<_numFolders;++j){
+						for (j=0;j<_numFolders && !_worked;++j){
 							if (j==i){
 								continue;
 							}
+							// get path of a working copy of this file
 							char* _tempPath = malloc(strlen(_currentEntry->path)+strlen(args[j+2])+1);
 							strcpy(_tempPath,args[j+2]);
 							strcat(_tempPath,_currentEntry->path);
 							if (fileExists(_tempPath)){
-								char* _possibleHash = hashFile(_tempPath);
-								if (_possibleHash!=NULL){
-									if (strcmp(_possibleHash,_currentEntry->hash)==0){
-										printf("Copying and hashing %s to %s\n",_tempPath,_destPath);
-										copyFile(_tempPath,_destPath);
-										// Check dest file after copied
-										free(_possibleHash);
-										_possibleHash = hashFile(_destPath); // Now this refers to the hash of our dest file
-										if (_possibleHash!=NULL){
-											if (strcmp(_currentEntry->hash,_possibleHash)==0){
-												printf("Successful copy.\n");
-												_worked=1;
-											}else{
-												printf("Wrong hash after copying to %s. Expected %s.\n",_destPath,_currentEntry->hash);
-											}
-											free(_possibleHash);
-										}else{
-											printf("Failed to hash dest file after copying %s to %s\n",_tempPath,_destPath);
-										}
-									}else{
-										printf("Copy candidate at %s hash does not line up. Got %s, expected %s.\n",_tempPath,_possibleHash,_currentEntry->hash);
-										free(_possibleHash);
-									}
-								}else{
-									printf("Failed to hash existing copy source candidate at %s\n",_tempPath);
-								}
+								printf("Copying %s to %s\n",_tempPath,_destPath);
+								copyFile(_tempPath,_destPath);
 							}
 							free(_tempPath);
 						}
@@ -820,6 +802,7 @@ int main(int argc, char** args){
 			})
 		}
 		resetDatabaseSeen(_currentDatabase);
+		// if we're only adding to database from the primary folder, disable ACTION_UPDATEDB after the first run
 		if (i==0 && _addFromPrimaryOnly){
 			_passedActions &= ~(1UL << 2);
 		}
