@@ -3,6 +3,7 @@
 #define _XOPEN_SOURCE 500 // enable nftw
 #define _GNU_SOURCE // for getline
 #include <stdio.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ftw.h>
@@ -21,7 +22,6 @@
 #ifndef linux
 	#warning forward slash is used for directory separator
 #endif
-#define FOLLOWSYMS 0
 #define HASHLEN 8
 #define HASHLENSTR "8"
 #define OKMESSAGE "OK"
@@ -61,6 +61,12 @@ struct checkArg{
 	struct filterEntry* includeFilters;
 	int numExcludes; // -1 to disable
 	struct filterEntry* excludeFilters;
+	struct nList* symList;
+	signed char hasChangedSymList; // is -1 if sym links are not being saved
+};
+struct linkPair{
+	char* source;
+	char* dest;
 };
 //
 char fileExists(const char* _passedPath){
@@ -216,6 +222,29 @@ char filterMatches(const unsigned char* _test, int _testLen, const unsigned char
 	}
 	return (_filterPos==_filterLen && _testPos==_testLen);
 }
+void writeSymDatabase(struct nList* _passedSymList, char* _passedOut){
+	FILE* fp = fopen(_passedOut,"wb");
+	if (fp==NULL){
+		fprintf(stderr,"Failed to open %s;%s\n",_passedOut,strerror(errno));
+		return;
+	}
+	//
+	ITERATENLIST(_passedSymList,{
+		struct linkPair* _currentEntry = _curnList->data;
+		// add one to the length in order to also write null byte
+		int _cachedStrlen=strlen(_currentEntry->source)+1;
+		if (fwrite(_currentEntry->source,1,_cachedStrlen,fp)!=_cachedStrlen){
+			fputs("failed to write correct number of bytes",stderr);
+			break;
+		}
+		_cachedStrlen=strlen(_currentEntry->dest)+1;
+		if (fwrite(_currentEntry->dest,1,_cachedStrlen,fp)!=_cachedStrlen){
+			fputs("failed to write correct number of bytes",stderr);
+			break;
+		}
+	})
+	fclose(fp);
+}
 void writeDatabase(struct nList* _passedDatabase, char* _passedOut){
 	char _isStdout=0;
 	FILE* fp = fopen(_passedOut,"wb");
@@ -287,6 +316,38 @@ char isFiltered(const char* _passedPath, unsigned char _passedType, int _numFilt
 		}
 	}
 	return 0;
+}
+struct nList* readSymDatabase(char* _infile){
+	FILE* fp = fopen(_infile,"rb");
+	if (fp==NULL){
+		fprintf(stderr,"could not open for reading %s\n",_infile);
+		exit(1);
+	}
+	struct nList* _ret=NULL;
+	struct nList** _speedyAdd = initSpeedyAddnList(&_ret);
+	char* _curLine=NULL;
+	size_t _buffSize=0;
+	while(1){
+		if (getdelim(&_curLine,&_buffSize,'\0',fp)==-1){
+			if (feof(fp)){
+				break;
+			}else{
+				fputs("error reading from file (simA)",stderr);
+				exit(1);
+			}
+		}
+		struct linkPair* _newEntry = malloc(sizeof(struct linkPair));
+		_speedyAdd = speedyAddnList(_speedyAdd,_newEntry);
+		_newEntry->source=strdup(_curLine);
+		if (getdelim(&_curLine,&_buffSize,'\0',fp)==-1){
+			fputs("error reading from file (simB)",stderr);
+			exit(1);
+		}
+		_newEntry->dest=strdup(_curLine);
+	}
+	endSpeedyAddnList(_speedyAdd);
+	fclose(fp);
+	return _ret;
 }
 struct nList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
 	FILE* fp = fopen(_passedDatabaseFile,"rb");
@@ -487,7 +548,15 @@ char* hashFile(const char* _passedFilename){
 		return NULL;
 	}
 }
-
+char hasSymEntry(struct nList* _passedList, const char* _strippedName){
+	ITERATENLIST(_passedList,{
+		struct linkPair* _currentEntry = _curnList->data;
+		if (strcmp(_currentEntry->source,_strippedName)==0){
+			return 1;
+		}
+	})
+	return 0;
+}
 struct singleDatabaseEntry* getFromDatabase(struct nList* _passedDatabase, const char* _searchName){
 	ITERATENLIST(_passedDatabase,{
 		struct singleDatabaseEntry* _currentEntry = _curnList->data;
@@ -534,7 +603,7 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 		if (typeflag==FTW_D){
 			return 2; // Skip dir contents
 		}else{
-			return 0; // for unknown things and files
+			return 0; // for unknown things and files - return OK
 		}
 	}
 	//
@@ -613,6 +682,21 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 			fprintf(stderr,"(way1)Failed to hash file %s\n",fpath);
 		}
 		free(_actualHash);
+	}else if ((typeflag==FTW_SL || typeflag==FTW_SLN) && (_passedCheck->hasChangedSymList!=-1)){ // if it's a symlink and symlink saving is enabled
+		const char* _strippedPath = &(fpath[_cachedRootStrlen]);
+		if (!hasSymEntry(_passedCheck->symList,_strippedPath)){
+			char* _destPath = realpath(fpath,NULL); // is allocated automatically
+			if (_destPath){
+				_passedCheck->hasChangedSymList=1;
+				struct linkPair* _addEntry = malloc(sizeof(struct linkPair));
+				_addEntry->source=strdup(_strippedPath);
+				_addEntry->dest=_destPath;
+				addnList(&(_passedCheck->symList))->data=_addEntry;
+			}else{
+				fprintf(stderr,"failed to follow link %s: %s\n",fpath,strerror(errno));
+				return 1;
+			}
+		}
 	}else{
 		if (typeflag!=FTW_D){
 			fprintf(stderr,"Unknown thing passed.\n%d:%s\n",typeflag,fpath);
@@ -622,7 +706,7 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 	return 0;
 }
 // Returns list of broken files
-char checkDir(struct nList** _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified, long _passedActions, int _numIncludes, struct filterEntry* _passedIncludes, int _numExcludes, struct filterEntry* _passedExcludes, struct nList** _retBad){
+char checkDir(struct nList** _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified, long _passedActions, int _numIncludes, struct filterEntry* _passedIncludes, int _numExcludes, struct filterEntry* _passedExcludes, struct nList** _retBad, struct nList** _passedSymList, char* _retChangedSymList){
 	struct checkArg myCheckArgs;
 	myCheckArgs.database = *_passedDatabase;
 	myCheckArgs.retBad = NULL; 
@@ -633,10 +717,21 @@ char checkDir(struct nList** _passedDatabase, char* _passedDirectory, char* _ret
 	myCheckArgs.includeFilters=_passedIncludes;
 	myCheckArgs.numExcludes=_numExcludes;
 	myCheckArgs.excludeFilters=_passedExcludes;
-	char _ret = nftwArg(_passedDirectory,checkSingleFile,5,FOLLOWSYMS ? 0 : FTW_PHYS, &myCheckArgs);
+	if (_passedSymList!=NULL){
+		myCheckArgs.hasChangedSymList=0;
+		myCheckArgs.symList=*_passedSymList;
+	}else{
+		myCheckArgs.hasChangedSymList=-1; // disable sym list
+		myCheckArgs.symList=NULL;
+	}
+	char _ret = nftwArg(_passedDirectory,checkSingleFile,5,_passedSymList!=NULL ? FTW_PHYS : 0, &myCheckArgs);
 	*_ret_DatabaseModified = myCheckArgs.hasChangedDatabase;
 	*_passedDatabase = myCheckArgs.database;
 	*_retBad = myCheckArgs.retBad;
+	if (_passedSymList!=NULL){
+		*_passedSymList=myCheckArgs.symList;
+		*_retChangedSymList=myCheckArgs.hasChangedSymList;
+	}
 	return _ret;
 }
 char hasArg(char* _searchTarget, int argc, char** args){
@@ -659,6 +754,8 @@ int main(int argc, char** args){
 	struct filterEntry* _includeFilters=NULL;
 	int _numExcludeFilters=-1;
 	struct filterEntry* _excludeFilters=NULL;
+
+	char* _symListFile=NULL;
 	
 	int _numFolders=argc-2;
 	long _passedActions = 0;
@@ -715,11 +812,14 @@ int main(int argc, char** args){
 		_numFolders-=2;
 		_includeFilters = loadFilter(args[_possibleIndex], &_numIncludeFilters);
 	}
-	if (_possibleIndex=hasArg("--exclude",argc,args)){
+	if ((_possibleIndex=hasArg("--exclude",argc,args))){
 		_numFolders-=2;
 		_excludeFilters = loadFilter(args[_possibleIndex], &_numExcludeFilters);
 	}
-	
+	if ((_possibleIndex=hasArg("--symSave",argc,args))){
+		_numFolders-=2;
+		_symListFile = args[_possibleIndex];
+	}
 	//
 	for (i=0;i<_numFolders;++i){
 		if (args[i+2][strlen(args[i+2])-1]!=SEPARATOR){
@@ -741,13 +841,15 @@ int main(int argc, char** args){
 	}
 	/////////////////
 	int _origDatabaseLen;
+	struct nList* _curSymList = _symListFile ? readSymDatabase(_symListFile) : NULL;
 	struct nList* _currentDatabase = readDatabase(args[1],&_origDatabaseLen);
 	struct nList* _brokenLists[_numFolders];
 	for (i=0;i<_numFolders;++i){
 		fprintf(stderr,"Now checking folder %s\n",args[i+2]);
 		printf("Now checking folder %s\n",args[i+2]);
 		char _needResaveDatabase=0;
-		if (checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase,_passedActions,_numIncludeFilters,_includeFilters,_numExcludeFilters,_excludeFilters,&_brokenLists[i])){
+		char _needResaveSymList=0;
+		if (checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase,_passedActions,_numIncludeFilters,_includeFilters,_numExcludeFilters,_excludeFilters,&_brokenLists[i],_symListFile!=NULL ? &_curSymList : NULL,&_needResaveSymList)){
 			fprintf(stderr,"Checking failed!\n");
 			return 1;
 		}
@@ -768,7 +870,14 @@ int main(int argc, char** args){
 		if (_needResaveDatabase){
 			writeDatabase(_currentDatabase,args[1]);
 		}else{
-			printf("No database changes.\n");
+			puts("No file database changes.");
+		}
+		if (_symListFile!=NULL){
+			if (_needResaveSymList){
+				writeSymDatabase(_curSymList,_symListFile);
+			}else{
+				puts("No sym database changes.");
+			}
 		}
 		if ((_passedActions & ACTION_COPYMISSING) || (_passedActions & ACTION_LISTMISSING)){
 			int _curCheckIndex=0;

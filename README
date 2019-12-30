@@ -34,6 +34,9 @@ Just append these to the end of your command. If you spell them wrong, they'll b
 --missingCanBeOldFile
 	* By default, only files that were just found in the primary folders will be added to the backup folders. This means that if a file in a backup folder goes missing, it won't be silently copied over again.
 	* This allows files that were already in the database (old files) to be found to be missing in a backup folder and then copied to the backup folder.
+--symSave <symlink save file>
+	* Instead of following symbolic links, save a file that lists all symlinks and their absolute destinations.
+	* The specified file must be created manually beforehand or you will get an error. An easy way to create a **completely empty** file is to do "echo -n > (filepath)"
 
 Excluding/Including Specific Files
 ----------------------------------
