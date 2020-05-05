@@ -194,7 +194,8 @@ struct nList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
 	if (_retNumRead){
 		*_retNumRead=0;
 	}
-	struct nList* _ret = NULL;
+	struct nList* _retList = NULL;
+	struct nList** _speedyAdd = initSpeedyAddnList(&_retList);
 	while(!feof(fp)){
 		size_t _lastRead=0;
 		char* _currentLine=NULL;
@@ -224,14 +225,15 @@ struct nList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
 		_currentEntry->hash = malloc(strlen(_spaceSpot));
 		strcpy(_currentEntry->hash,_spaceSpot+1);
 
-		addnList(&_ret)->data = _currentEntry;
+		_speedyAdd = speedyAddnList(_speedyAdd,_currentEntry);
 		free(_currentLine);
 		if (_retNumRead){
 			*_retNumRead+=1;
 		}
 	}
+	endSpeedyAddnList(_speedyAdd);
 	fclose(fp);
-	return _ret;
+	return _retList;
 }
 void freeDatabase(struct nList* _passedList){
 	ITERATENLIST(_passedList,{
@@ -635,12 +637,15 @@ int main(int argc, char** args){
 		--_numFolders;
 	}
 	if (hasArg("--addFromBackups",argc,args)){
+		--_numFolders;
 		_addFromPrimaryOnly=0;
 	}
 	if (hasArg("--primaryCanRestoreMissing",argc,args)){
+		--_numFolders;
 		_primaryCanRestoreMissing=1;
 	}
 	if (hasArg("--missingCanBeOldFile",argc,args)){
+		--_numFolders;
 		_missingCanBeOldFile=1;
 	}
 	int _possibleIndex = hasArg("--include",argc,args);
