@@ -463,7 +463,6 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 					_fileMatched=(strcmp(_actualHash,_matchingEntry->hash)==0);
 					fprintf(_fileMatched ? stdout : stderr,REPORTMESSAGE,_fileMatched ? OKMESSAGE : BADMESSAGE, _actualHash, _matchingEntry->hash, fpath);
 				}else{
-					printf("Seen %s\n",fpath);
 					_fileMatched=2;
 				}
 			}
@@ -523,22 +522,31 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 	}else if ((typeflag==FTW_SL || typeflag==FTW_SLN) && (_passedCheck->hasChangedSymList!=-1)){ // if it's a symlink and symlink saving is enabled
 		const char* _strippedPath = &(fpath[_cachedRootStrlen]);
 		if (!hasSymEntry(_passedCheck->symList,_strippedPath)){
-			char* _destPath = realpath(fpath,NULL); // is allocated automatically
+			char* _destPath=realpath(fpath,NULL); // is allocated automatically
 			if (_destPath){
+			putlink:
 				_passedCheck->hasChangedSymList=1;
 				struct linkPair* _addEntry = malloc(sizeof(struct linkPair));
 				_addEntry->source=strdup(_strippedPath);
 				_addEntry->dest=_destPath;
 				addnList(&(_passedCheck->symList))->data=_addEntry;
 			}else{
+				if (errno==ENOENT){ // dest does not exist
+					_destPath=strdup("//broken//");
+					goto putlink;
+				}
 				fprintf(stderr,"failed to follow link %s: %s\n",fpath,strerror(errno));
 				return 1;
 			}
 		}
 	}else{
 		if (typeflag!=FTW_D){
-			fprintf(stderr,"Unknown thing passed.\n%d:%s\n",typeflag,fpath);
-			return 1;
+			if (typeflag==FTW_SLN){
+				fprintf(stderr,"Warning: FTW_SLN cannot be saved without symlink list.\n%s\n",fpath);
+			}else{
+				fprintf(stderr,"Unknown thing passed.\n%d:%s\n",typeflag,fpath);
+				return 1;
+			}
 		}
 	}
 	return 0;
