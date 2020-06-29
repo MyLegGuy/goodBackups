@@ -809,5 +809,7 @@ int main(int argc, char** args){
 	/* 	freeDatabase(_brokenLists[i]); */
 	/* } */
 	freeDatabase(_currentDatabase);
-	freeSymDatabase(_curSymList);
+	if (_curSymList){
+		freeSymDatabase(_curSymList);
+	}
 }
