@@ -49,7 +49,7 @@ struct checkArg{
 	struct filterEntry* includeFilters;
 	int numExcludes; // -1 to disable
 	struct filterEntry* excludeFilters;
-	struct nList* symList;
+	struct sortedArrList* symList;
 	signed char hasChangedSymList; // is -1 if sym links are not being saved
 };
 struct linkPair{
@@ -60,6 +60,11 @@ struct linkPair{
 int entryPointerComparer(const void* a, const void* b){
 	char* _strA = ((struct singleDatabaseEntry*)*((void**)a))->path;
 	char* _strB = ((struct singleDatabaseEntry*)*((void**)b))->path;
+	return strcmp(_strA,_strB);
+}
+int linkPairPtrComparer(const void* a, const void* b){
+	char* _strA = ((struct linkPair*)*((void**)a))->source;
+	char* _strB = ((struct linkPair*)*((void**)b))->source;
 	return strcmp(_strA,_strB);
 }
 char fileExists(const char* _passedPath){
@@ -96,15 +101,15 @@ void removeNewline(char* _toRemove){
 		}
 	}
 }
-void writeSymDatabase(struct nList* _passedSymList, char* _passedOut){
+void writeSymDatabase(struct sortedArrList* _passedSymList, char* _passedOut){
 	FILE* fp = fopen(_passedOut,"wb");
 	if (fp==NULL){
 		fprintf(stderr,"Failed to open %s;%s\n",_passedOut,strerror(errno));
 		return;
 	}
 	//
-	ITERATENLIST(_passedSymList,{
-		struct linkPair* _currentEntry = _curnList->data;
+	for (int j=0;j<_passedSymList->arrUsed;++j){
+		struct linkPair* _currentEntry = _passedSymList->arr[j];
 		// add one to the length in order to also write null byte
 		int _cachedStrlen=strlen(_currentEntry->source)+1;
 		if (fwrite(_currentEntry->source,1,_cachedStrlen,fp)!=_cachedStrlen){
@@ -116,7 +121,7 @@ void writeSymDatabase(struct nList* _passedSymList, char* _passedOut){
 			fputs("failed to write correct number of bytes",stderr);
 			break;
 		}
-	})
+	}
 	fclose(fp);
 }
 void writeDatabase(struct sortedArrList* _passedDatabase, char* _passedOut){
@@ -159,14 +164,14 @@ void writeDatabase(struct sortedArrList* _passedDatabase, char* _passedOut){
 		fclose(fp);
 	}
 }
-struct nList* readSymDatabase(char* _infile){
+struct sortedArrList* readSymDatabase(char* _infile){
 	FILE* fp = fopen(_infile,"rb");
 	if (fp==NULL){
 		fprintf(stderr,"could not open for reading %s\n",_infile);
 		exit(1);
 	}
-	struct nList* _ret=NULL;
-	struct nList** _speedyAdd = initSpeedyAddnList(&_ret);
+	struct sortedArrList* _ret = malloc(sizeof(struct sortedArrList));
+	initSortedArrList(_ret,linkPairPtrComparer);
 	char* _curLine=NULL;
 	size_t _buffSize=0;
 	while(1){
@@ -179,15 +184,15 @@ struct nList* readSymDatabase(char* _infile){
 			}
 		}
 		struct linkPair* _newEntry = malloc(sizeof(struct linkPair));
-		_speedyAdd = speedyAddnList(_speedyAdd,_newEntry);
 		_newEntry->source=strdup(_curLine);
 		if (getdelim(&_curLine,&_buffSize,'\0',fp)==-1){
 			fputs("error reading from file (simB)",stderr);
 			exit(1);
 		}
 		_newEntry->dest=strdup(_curLine);
+		shoveInSortedArrList(_ret,_newEntry);
 	}
-	endSpeedyAddnList(_speedyAdd);
+	free(_curLine);
 	fclose(fp);
 	return _ret;
 }
@@ -255,6 +260,16 @@ void resetDatabaseSeen(struct sortedArrList* _passedList){
 	for (int i=0;i<_passedList->arrUsed;++i){
 		((struct singleDatabaseEntry*)_passedList->arr[i])->seen=0;
 	}
+}
+void freeSymDatabase(struct sortedArrList* _passedList){
+	for (int j=0;j<_passedList->arrUsed;++j){
+		struct linkPair* _currentEntry = _passedList->arr[j];
+		free(_currentEntry->source);
+		free(_currentEntry->dest);
+		free(_currentEntry);
+	}
+	free(_passedList->arr);
+	free(_passedList);
 }
 char readABit(FILE* fp, char* _destBuffer, long* _numRead, long _maxRead){
 	if (feof(fp)){
@@ -394,14 +409,10 @@ char* hashFile(const char* _passedFilename){
 		return NULL;
 	}
 }
-char hasSymEntry(struct nList* _passedList, const char* _strippedName){
-	ITERATENLIST(_passedList,{
-		struct linkPair* _currentEntry = _curnList->data;
-		if (strcmp(_currentEntry->source,_strippedName)==0){
-			return 1;
-		}
-	})
-	return 0;
+int getFromSymList(struct sortedArrList* _passedList, const char* _strippedName){
+	struct linkPair _testEntry;
+	_testEntry.source=(char*)_strippedName;
+	return searchSortedArr(_passedList,&_testEntry);
 }
 int getFromDatabase(struct sortedArrList* _passedDatabase, const char* _searchName){
 	struct singleDatabaseEntry _testEntry;
@@ -533,7 +544,9 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 		free(_actualHash);
 	}else if ((typeflag==FTW_SL || typeflag==FTW_SLN) && (_passedCheck->hasChangedSymList!=-1)){ // if it's a symlink and symlink saving is enabled
 		const char* _strippedPath = &(fpath[_cachedRootStrlen]);
-		if (!hasSymEntry(_passedCheck->symList,_strippedPath)){
+		int _index = getFromSymList(_passedCheck->symList,_strippedPath);
+		if (_index<0){
+			_index=(_index*-1)-1;
 			char* _destPath=realpath(fpath,NULL); // is allocated automatically
 			if (_destPath){
 			putlink:
@@ -541,7 +554,7 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 				struct linkPair* _addEntry = malloc(sizeof(struct linkPair));
 				_addEntry->source=strdup(_strippedPath);
 				_addEntry->dest=_destPath;
-				addnList(&(_passedCheck->symList))->data=_addEntry;
+				indexPutInSortedArrList(_passedCheck->symList,_addEntry,_index);
 			}else{
 				if (errno==ENOENT){ // dest does not exist
 					_destPath=strdup("//broken//");
@@ -564,7 +577,7 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 	return 0;
 }
 // Returns list of broken files
-char checkDir(struct sortedArrList* _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified, long _passedActions, int _numIncludes, struct filterEntry* _passedIncludes, int _numExcludes, struct filterEntry* _passedExcludes, struct nList** _retBad, struct nList** _passedSymList, char* _retChangedSymList){
+char checkDir(struct sortedArrList* _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified, long _passedActions, int _numIncludes, struct filterEntry* _passedIncludes, int _numExcludes, struct filterEntry* _passedExcludes, struct nList** _retBad, struct sortedArrList* _passedSymList, char* _retChangedSymList){
 	struct checkArg myCheckArgs;
 	myCheckArgs.database = _passedDatabase;
 	myCheckArgs.retBad = NULL; 
@@ -577,7 +590,7 @@ char checkDir(struct sortedArrList* _passedDatabase, char* _passedDirectory, cha
 	myCheckArgs.excludeFilters=_passedExcludes;
 	if (_passedSymList!=NULL){
 		myCheckArgs.hasChangedSymList=0;
-		myCheckArgs.symList=*_passedSymList;
+		myCheckArgs.symList=_passedSymList;
 	}else{
 		myCheckArgs.hasChangedSymList=-1; // disable sym list
 		myCheckArgs.symList=NULL;
@@ -586,7 +599,6 @@ char checkDir(struct sortedArrList* _passedDatabase, char* _passedDirectory, cha
 	*_ret_DatabaseModified = myCheckArgs.hasChangedDatabase;
 	*_retBad = myCheckArgs.retBad;
 	if (_passedSymList!=NULL){
-		*_passedSymList=myCheckArgs.symList;
 		*_retChangedSymList=myCheckArgs.hasChangedSymList;
 	}
 	return _ret;
@@ -701,7 +713,7 @@ int main(int argc, char** args){
 	}
 	/////////////////
 	int _origDatabaseLen;
-	struct nList* _curSymList = _symListFile ? readSymDatabase(_symListFile) : NULL;
+	struct sortedArrList* _curSymList = _symListFile ? readSymDatabase(_symListFile) : NULL;
 	struct sortedArrList* _currentDatabase = readDatabase(args[1],&_origDatabaseLen);
 	struct nList* _brokenLists[_numFolders];
 	for (i=0;i<_numFolders;++i){
@@ -709,7 +721,7 @@ int main(int argc, char** args){
 		printf("Now checking folder %s\n",args[i+2]);
 		char _needResaveDatabase=0;
 		char _needResaveSymList=0;
-		if (checkDir(_currentDatabase,args[i+2],&_needResaveDatabase,_passedActions,_numIncludeFilters,_includeFilters,_numExcludeFilters,_excludeFilters,&_brokenLists[i],_symListFile!=NULL ? &_curSymList : NULL,&_needResaveSymList)){
+		if (checkDir(_currentDatabase,args[i+2],&_needResaveDatabase,_passedActions,_numIncludeFilters,_includeFilters,_numExcludeFilters,_excludeFilters,&_brokenLists[i],_symListFile!=NULL ? _curSymList : NULL,&_needResaveSymList)){
 			fprintf(stderr,"Checking failed!\n");
 			return 1;
 		}
@@ -797,4 +809,5 @@ int main(int argc, char** args){
 	/* 	freeDatabase(_brokenLists[i]); */
 	/* } */
 	freeDatabase(_currentDatabase);
+	freeSymDatabase(_curSymList);
 }
