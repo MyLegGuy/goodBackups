@@ -16,6 +16,7 @@
 #include "goodLinkedList.h"
 #include "main.h"
 #include "filter.h"
+#include "sortedArrayList.h"
 //
 #define HASHBUFFSIZE 16000 // 16 k
 #define COPYBUFF HASHBUFFSIZE
@@ -40,7 +41,7 @@ struct singleDatabaseEntry{
 };
 struct checkArg{
 	char* rootChop;
-	struct nList* database;
+	struct sortedArrList* database;
 	struct nList* retBad;
 	char hasChangedDatabase;
 	long chosenActions;
@@ -56,6 +57,11 @@ struct linkPair{
 	char* dest;
 };
 //
+int entryPointerComparer(const void* a, const void* b){
+	char* _strA = ((struct singleDatabaseEntry*)*((void**)a))->path;
+	char* _strB = ((struct singleDatabaseEntry*)*((void**)b))->path;
+	return strcmp(_strA,_strB);
+}
 char fileExists(const char* _passedPath){
 	return (access(_passedPath, R_OK)!=-1);
 }
@@ -113,7 +119,7 @@ void writeSymDatabase(struct nList* _passedSymList, char* _passedOut){
 	})
 	fclose(fp);
 }
-void writeDatabase(struct nList* _passedDatabase, char* _passedOut){
+void writeDatabase(struct sortedArrList* _passedDatabase, char* _passedOut){
 	char _isStdout=0;
 	FILE* fp = fopen(_passedOut,"wb");
 	if (fp==NULL){
@@ -142,12 +148,12 @@ void writeDatabase(struct nList* _passedDatabase, char* _passedOut){
 		}
 	}
 	//
-	ITERATENLIST(_passedDatabase,{
-		struct singleDatabaseEntry* _currentEntry = _curnList->data;
+	for (int i=0;i<_passedDatabase->arrUsed;++i){
+		struct singleDatabaseEntry* _currentEntry = _passedDatabase->arr[i];
 		if (fprintf(fp,"%s %s\n",_currentEntry->path,_currentEntry->hash)!=(strlen(_currentEntry->path)+1+strlen(_currentEntry->hash)+strlen("\n"))){
 			fprintf(stderr,"wrote wrong number of bytes\n");
 		}
-	})
+	}
 	//
 	if (!_isStdout){
 		fclose(fp);
@@ -185,7 +191,7 @@ struct nList* readSymDatabase(char* _infile){
 	fclose(fp);
 	return _ret;
 }
-struct nList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
+struct sortedArrList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
 	FILE* fp = fopen(_passedDatabaseFile,"rb");
 	if (fp==NULL){
 		fprintf(stderr,"Could not open for reading %s\n",_passedDatabaseFile);
@@ -194,8 +200,8 @@ struct nList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
 	if (_retNumRead){
 		*_retNumRead=0;
 	}
-	struct nList* _retList = NULL;
-	struct nList** _speedyAdd = initSpeedyAddnList(&_retList);
+	struct sortedArrList* _retList = malloc(sizeof(struct sortedArrList));
+	initSortedArrList(_retList,entryPointerComparer);
 	while(!feof(fp)){
 		size_t _lastRead=0;
 		char* _currentLine=NULL;
@@ -225,28 +231,30 @@ struct nList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
 		_currentEntry->hash = malloc(strlen(_spaceSpot));
 		strcpy(_currentEntry->hash,_spaceSpot+1);
 
-		_speedyAdd = speedyAddnList(_speedyAdd,_currentEntry);
+		shoveInSortedArrList(_retList,_currentEntry);
 		free(_currentLine);
 		if (_retNumRead){
 			*_retNumRead+=1;
 		}
 	}
-	endSpeedyAddnList(_speedyAdd);
 	fclose(fp);
+	// TODO - somehow figure out if the database is already sorted so that I don't need to do this?
+	qsort(_retList->arr,_retList->arrUsed,sizeof(void*),entryPointerComparer);
 	return _retList;
 }
-void freeDatabase(struct nList* _passedList){
-	ITERATENLIST(_passedList,{
-		free(((struct singleDatabaseEntry*)_curnList->data)->path);
-		free(((struct singleDatabaseEntry*)_curnList->data)->hash);
-		free(_curnList->data);
-		free(_curnList);
-	})
+void freeDatabase(struct sortedArrList* _passedList){
+	for (int i=0;i<_passedList->arrUsed;++i){
+		free(((struct singleDatabaseEntry*)_passedList->arr[i])->path);
+		free(((struct singleDatabaseEntry*)_passedList->arr[i])->hash);
+		free(_passedList->arr[i]);
+	}
+	freeSortedArrList(_passedList);
+	free(_passedList);
 }
-void resetDatabaseSeen(struct nList* _passedList){
-	ITERATENLIST(_passedList,{
-		((struct singleDatabaseEntry*)_curnList->data)->seen=0;
-	})
+void resetDatabaseSeen(struct sortedArrList* _passedList){
+	for (int i=0;i<_passedList->arrUsed;++i){
+		((struct singleDatabaseEntry*)_passedList->arr[i])->seen=0;
+	}
 }
 char readABit(FILE* fp, char* _destBuffer, long* _numRead, long _maxRead){
 	if (feof(fp)){
@@ -395,13 +403,16 @@ char hasSymEntry(struct nList* _passedList, const char* _strippedName){
 	})
 	return 0;
 }
-struct singleDatabaseEntry* getFromDatabase(struct nList* _passedDatabase, const char* _searchName){
-	ITERATENLIST(_passedDatabase,{
-		struct singleDatabaseEntry* _currentEntry = _curnList->data;
-		if (strcmp(_searchName,_currentEntry->path)==0){
-			return _currentEntry;
-		}
-	})
+int getFromDatabase(struct sortedArrList* _passedDatabase, const char* _searchName){
+	struct singleDatabaseEntry _testEntry;
+	_testEntry.path=(char*)_searchName;
+	return searchSortedArr(_passedDatabase,&_testEntry);
+}
+struct singleDatabaseEntry* getFromDatabaseItem(struct sortedArrList* _passedDatabase, const char* _searchName){
+	int _index = getFromDatabase(_passedDatabase,_searchName);
+	if (_index>=0){
+		return _passedDatabase->arr[_index];
+	}
 	return NULL;
 }
 // sometimes a passed folder will end with a slash, but not always
@@ -451,10 +462,10 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 			_actualHash = hashFile(fpath);
 		}
 		if (_actualHash!=NULL || ((_passedCheck->chosenActions & ACTION_CHECKEXISTING)==0)){
-			signed char _fileMatched=-1; // -1 means not in database, 0 means did not match, 1 means matched, 2 means do no more with this file
-			struct singleDatabaseEntry* _matchingEntry = getFromDatabase(_passedCheck->database,&(fpath[_cachedRootStrlen]));
-
-			if (_matchingEntry!=NULL){
+			signed char _fileMatched=-1; // -1 means not in database, 0 means did not match, 1 means matched, 2 means do no more with this file			
+			int _index = getFromDatabase(_passedCheck->database,&(fpath[_cachedRootStrlen]));
+			if (_index>=0){
+				struct singleDatabaseEntry* _matchingEntry=_passedCheck->database->arr[_index];
 				if (_matchingEntry->seen){
 					fprintf(stderr,"What? Already seen %s?\n",_matchingEntry->path);
 				}
@@ -465,8 +476,9 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 				}else{
 					_fileMatched=2;
 				}
+			}else{
+				_index=(_index*-1)-1;
 			}
-			
 			if (_fileMatched==-1 || _fileMatched==0){ // File not in database or file wrong hash.
 				struct singleDatabaseEntry* _newEntry = malloc(sizeof(struct singleDatabaseEntry));
 				_newEntry->path = strdup(&(fpath[_cachedRootStrlen]));
@@ -488,14 +500,14 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 							if (_fileMatched){
 								// Can reuse our struct because our file matched so we don't need to add to bad list
 								_newEntry->hash = _possibleTagHash;
-								addnList(&(_passedCheck->database))->data=_newEntry;
+								indexPutInSortedArrList(_passedCheck->database,_newEntry,_index);
 							}else{
 								// Need a new struct for the database representing the okay hash
 								struct singleDatabaseEntry* _addThis = malloc(sizeof(struct singleDatabaseEntry));
 								_addThis->path = strdup(_newEntry->path);
 								_addThis->hash = _possibleTagHash;
 								_addThis->seen = 1;
-								addnList(&(_passedCheck->database))->data=_addThis;
+								indexPutInSortedArrList(_passedCheck->database,_addThis,_index);
 								// and it's bad
 								_newEntry->hash = strdup(_actualHash);
 								addnList(&(_passedCheck->retBad))->data=_newEntry;
@@ -503,7 +515,7 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 						}else{ // No hash, not in database, assume our file is okay
 							printf(ADDNEWMESSAGE,fpath);
 							_newEntry->hash = strdup(_actualHash);
-							addnList(&(_passedCheck->database))->data=_newEntry;
+							indexPutInSortedArrList(_passedCheck->database,_newEntry,_index);
 						}
 						_passedCheck->hasChangedDatabase=1;
 					}else{
@@ -552,9 +564,9 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 	return 0;
 }
 // Returns list of broken files
-char checkDir(struct nList** _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified, long _passedActions, int _numIncludes, struct filterEntry* _passedIncludes, int _numExcludes, struct filterEntry* _passedExcludes, struct nList** _retBad, struct nList** _passedSymList, char* _retChangedSymList){
+char checkDir(struct sortedArrList* _passedDatabase, char* _passedDirectory, char* _ret_DatabaseModified, long _passedActions, int _numIncludes, struct filterEntry* _passedIncludes, int _numExcludes, struct filterEntry* _passedExcludes, struct nList** _retBad, struct nList** _passedSymList, char* _retChangedSymList){
 	struct checkArg myCheckArgs;
-	myCheckArgs.database = *_passedDatabase;
+	myCheckArgs.database = _passedDatabase;
 	myCheckArgs.retBad = NULL; 
 	myCheckArgs.rootChop = _passedDirectory;
 	myCheckArgs.hasChangedDatabase=0;
@@ -572,7 +584,6 @@ char checkDir(struct nList** _passedDatabase, char* _passedDirectory, char* _ret
 	}
 	char _ret = nftwArg(_passedDirectory,checkSingleFile,5,_passedSymList!=NULL ? FTW_PHYS : 0, &myCheckArgs);
 	*_ret_DatabaseModified = myCheckArgs.hasChangedDatabase;
-	*_passedDatabase = myCheckArgs.database;
 	*_retBad = myCheckArgs.retBad;
 	if (_passedSymList!=NULL){
 		*_passedSymList=myCheckArgs.symList;
@@ -691,14 +702,14 @@ int main(int argc, char** args){
 	/////////////////
 	int _origDatabaseLen;
 	struct nList* _curSymList = _symListFile ? readSymDatabase(_symListFile) : NULL;
-	struct nList* _currentDatabase = readDatabase(args[1],&_origDatabaseLen);
+	struct sortedArrList* _currentDatabase = readDatabase(args[1],&_origDatabaseLen);
 	struct nList* _brokenLists[_numFolders];
 	for (i=0;i<_numFolders;++i){
 		fprintf(stderr,"Now checking folder %s\n",args[i+2]);
 		printf("Now checking folder %s\n",args[i+2]);
 		char _needResaveDatabase=0;
 		char _needResaveSymList=0;
-		if (checkDir(&_currentDatabase,args[i+2],&_needResaveDatabase,_passedActions,_numIncludeFilters,_includeFilters,_numExcludeFilters,_excludeFilters,&_brokenLists[i],_symListFile!=NULL ? &_curSymList : NULL,&_needResaveSymList)){
+		if (checkDir(_currentDatabase,args[i+2],&_needResaveDatabase,_passedActions,_numIncludeFilters,_includeFilters,_numExcludeFilters,_excludeFilters,&_brokenLists[i],_symListFile!=NULL ? &_curSymList : NULL,&_needResaveSymList)){
 			fprintf(stderr,"Checking failed!\n");
 			return 1;
 		}
@@ -706,7 +717,7 @@ int main(int argc, char** args){
 			fprintf(stderr,"=====\nBROKEN FILES\n======\n");
 			ITERATENLIST(_brokenLists[i],{
 				struct singleDatabaseEntry* _badEntry = _curnList->data;
-				struct singleDatabaseEntry* _expectedEntry = getFromDatabase(_currentDatabase,_badEntry->path);
+				struct singleDatabaseEntry* _expectedEntry = getFromDatabaseItem(_currentDatabase,_badEntry->path);
 				if (_expectedEntry!=NULL){
 					fprintf(stderr,REPORTMESSAGE,BADMESSAGE, _badEntry->hash, _expectedEntry->hash, _badEntry->path);
 				}else{
@@ -714,7 +725,11 @@ int main(int argc, char** args){
 				}
 			})
 		}else{
-			printf("No broken files. :)\n");
+			if (!(_passedActions & ACTION_CHECKEXISTING)){
+				puts("No new files are broken. :)");
+			}else{
+				puts("No broken files. :)");
+			}
 		}
 		if (_needResaveDatabase){
 			writeDatabase(_currentDatabase,args[1]);
@@ -731,8 +746,8 @@ int main(int argc, char** args){
 		if ((_passedActions & ACTION_COPYMISSING) || (_passedActions & ACTION_LISTMISSING)){
 			int _curCheckIndex=0;
 			// Look for any files that should've been there but weren't
-			ITERATENLIST(_currentDatabase,{
-				struct singleDatabaseEntry* _currentEntry = _curnList->data;
+			for (int i=0;i<_currentDatabase->arrUsed;++i){
+				struct singleDatabaseEntry* _currentEntry = _currentDatabase->arr[i];
 				if (!_currentEntry->seen){
 					if (_curCheckIndex>=_origDatabaseLen || _missingCanBeOldFile){
 						char* _destPath = malloc(strlen(_currentEntry->path)+strlen(args[i+2])+1);
@@ -770,7 +785,7 @@ int main(int argc, char** args){
 					}
 				}
 				++_curCheckIndex;
-			})
+			}
 		}
 		resetDatabaseSeen(_currentDatabase);
 		// if we're only adding to database from the primary folder, disable ACTION_UPDATEDB after the first run
@@ -778,8 +793,8 @@ int main(int argc, char** args){
 			_passedActions &= ~(1UL << 2);
 		}
 	}
-	for (i=0;i<_numFolders;++i){
-		freeDatabase(_brokenLists[i]);
-	}
+	/* for (i=0;i<_numFolders;++i){ */
+	/* 	freeDatabase(_brokenLists[i]); */
+	/* } */
 	freeDatabase(_currentDatabase);
 }
