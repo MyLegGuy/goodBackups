@@ -746,8 +746,8 @@ int main(int argc, char** args){
 		if ((_passedActions & ACTION_COPYMISSING) || (_passedActions & ACTION_LISTMISSING)){
 			int _curCheckIndex=0;
 			// Look for any files that should've been there but weren't
-			for (int i=0;i<_currentDatabase->arrUsed;++i){
-				struct singleDatabaseEntry* _currentEntry = _currentDatabase->arr[i];
+			for (int j=0;j<_currentDatabase->arrUsed;++j){
+				struct singleDatabaseEntry* _currentEntry = _currentDatabase->arr[j];
 				if (!_currentEntry->seen){
 					if (_curCheckIndex>=_origDatabaseLen || _missingCanBeOldFile){
 						char* _destPath = malloc(strlen(_currentEntry->path)+strlen(args[i+2])+1);
