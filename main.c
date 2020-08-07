@@ -1,4 +1,5 @@
 // TODO - Put summary at end of stdout
+// TODO - files with line breaks in their names dont work. use null as delim?
 
 #define _XOPEN_SOURCE 500 // enable nftw
 #define _GNU_SOURCE // for getline
@@ -38,6 +39,7 @@ struct singleDatabaseEntry{
 	char* hash;
 	char* path;
 	signed char seen; // Only used for database
+	signed char isNew;
 };
 struct checkArg{
 	char* rootChop;
@@ -196,14 +198,11 @@ struct sortedArrList* readSymDatabase(char* _infile){
 	fclose(fp);
 	return _ret;
 }
-struct sortedArrList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
+struct sortedArrList* readDatabase(char* _passedDatabaseFile){
 	FILE* fp = fopen(_passedDatabaseFile,"rb");
 	if (fp==NULL){
 		fprintf(stderr,"Could not open for reading %s\n",_passedDatabaseFile);
 		return NULL;
-	}
-	if (_retNumRead){
-		*_retNumRead=0;
 	}
 	struct sortedArrList* _retList = malloc(sizeof(struct sortedArrList));
 	initSortedArrList(_retList,entryPointerComparer);
@@ -228,6 +227,7 @@ struct sortedArrList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
 		}
 		struct singleDatabaseEntry* _currentEntry = malloc(sizeof(struct singleDatabaseEntry));
 		_currentEntry->seen=0;
+		_currentEntry->isNew=0;
 
 		_currentEntry->path = malloc(_spaceSpot-_currentLine+1);
 		memcpy(_currentEntry->path,_currentLine,_spaceSpot-_currentLine);
@@ -238,9 +238,6 @@ struct sortedArrList* readDatabase(char* _passedDatabaseFile, int* _retNumRead){
 
 		shoveInSortedArrList(_retList,_currentEntry);
 		free(_currentLine);
-		if (_retNumRead){
-			*_retNumRead+=1;
-		}
 	}
 	fclose(fp);
 	// TODO - somehow figure out if the database is already sorted so that I don't need to do this?
@@ -496,9 +493,11 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 				_newEntry->seen = 1;
 				_newEntry->hash = "Nothing should be here right now.";
 				if (_fileMatched==0){ // File wrong hash. Only happens for ACTION_CHECKEXISTING
+					_newEntry->isNew=0;
 					_newEntry->hash = strdup(_actualHash);
 					addnList(&(_passedCheck->retBad))->data=_newEntry;
 				}else if (_fileMatched==-1 && (_passedCheck->chosenActions & ACTION_UPDATEDB)){ // File not found in database then add it
+					_newEntry->isNew=1;
 					if (_actualHash==NULL){
 						_actualHash = hashFile(fpath);
 					}
@@ -518,6 +517,7 @@ int checkSingleFile(const char *fpath, const struct stat *sb, int typeflag, stru
 								_addThis->path = strdup(_newEntry->path);
 								_addThis->hash = _possibleTagHash;
 								_addThis->seen = 1;
+								_addThis->isNew = 1;
 								indexPutInSortedArrList(_passedCheck->database,_addThis,_index);
 								// and it's bad
 								_newEntry->hash = strdup(_actualHash);
@@ -712,9 +712,8 @@ int main(int argc, char** args){
 		return 1;
 	}
 	/////////////////
-	int _origDatabaseLen;
 	struct sortedArrList* _curSymList = _symListFile ? readSymDatabase(_symListFile) : NULL;
-	struct sortedArrList* _currentDatabase = readDatabase(args[1],&_origDatabaseLen);
+	struct sortedArrList* _currentDatabase = readDatabase(args[1]);
 	struct nList* _brokenLists[_numFolders];
 	for (i=0;i<_numFolders;++i){
 		fprintf(stderr,"Now checking folder %s\n",args[i+2]);
@@ -761,7 +760,7 @@ int main(int argc, char** args){
 			for (int j=0;j<_currentDatabase->arrUsed;++j){
 				struct singleDatabaseEntry* _currentEntry = _currentDatabase->arr[j];
 				if (!_currentEntry->seen){
-					if (_curCheckIndex>=_origDatabaseLen || _missingCanBeOldFile){
+					if (_currentEntry->isNew || _missingCanBeOldFile){
 						char* _destPath = malloc(strlen(_currentEntry->path)+strlen(args[i+2])+1);
 						strcpy(_destPath,args[i+2]);
 						strcat(_destPath,_currentEntry->path);
@@ -793,7 +792,7 @@ int main(int argc, char** args){
 						}
 						free(_destPath);
 					}else{
-						fprintf(stderr,"old file (%d/%d) is missing: %s\n",_curCheckIndex,_origDatabaseLen-1,_currentEntry->path);
+						fprintf(stderr,"old file (new index %d) is missing: %s\n",_curCheckIndex,_currentEntry->path);
 					}
 				}
 				++_curCheckIndex;
