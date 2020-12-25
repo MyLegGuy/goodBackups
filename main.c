@@ -328,7 +328,7 @@ char lowCopyFile(const char* _srcPath, const char* _destPath, char _canMakeDirs)
 		}
 
 		if (_shouldRetry){
-			lowCopyFile(_srcPath,_destPath,0);
+			return lowCopyFile(_srcPath,_destPath,0);
 		}else{
 			fprintf(stderr,"Failed to open for writing %s\n",_destPath);
 			return 1;
